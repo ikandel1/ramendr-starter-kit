@@ -103,7 +103,7 @@ clusterGroup:
       chart: edge-gitops-vms
       chartVersion: 0.2.*
       extraValueFiles:
-        - '$patternref/overrides/values-vsk-vms.yaml'
+        - '$patternref/overrides/values-rdrsk-vms.yaml'
 
     node-health-check-operator:
       name: node-health-check-operator
