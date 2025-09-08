@@ -7,6 +7,10 @@ vms:
 
 vmNamespace: gitops-vms
 
+vmDefaults:
+  sshsecret: secret/data/global/vm-ssh
+  cloudinitsecret: secret/data/global/cloud-init
+
 serviceAccountName: gitops-vms-sa
 rbac:
   roleBindings:
