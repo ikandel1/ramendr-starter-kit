@@ -44,11 +44,11 @@
 
     - name: Extract worker machinesets
       ansible.builtin.set_fact:
-        cluster_machinesets: "{{ cluster_machinesets_raw.resources | selectattr('metadata.name', 'match', '-worker-') }}"
+        cluster_machinesets: "{{ cluster_machinesets_raw.resources | selectattr('metadata.name', 'search', 'worker') }}"
 
     - name: Extract target machinesets
       ansible.builtin.set_fact:
-        target_machineset_resources: "{{ cluster_machinesets.resources[0:max_machineset_count | int] }}"
+        target_machineset_resources: "{{ cluster_machinesets[0:max_machineset_count | int] }}"
 
     - name: Ensure we have at least two machines if only one machineset
       ansible.builtin.set_fact:
