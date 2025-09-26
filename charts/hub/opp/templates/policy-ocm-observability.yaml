@@ -1,3 +1,17 @@
+{{- $obc := (lookup "objectbucket.io/v1alpha1" "ObjectBucket" "" "openshift-storage-obc-observability") -}}
+{{- $secret := (lookup "v1" "Secret" "openshift-storage" "noobaa-admin") -}}
+{{- $bucketName := "obc-observability-bucket" -}}
+{{- $endpoint := "s3.openshift-storage.svc.cluster.local" -}}
+{{- $accessKey := "placeholder" -}}
+{{- $secretKey := "placeholder" -}}
+{{- if $obc -}}
+{{- $bucketName = $obc.spec.endpoint.bucketName -}}
+{{- $endpoint = $obc.spec.endpoint.bucketHost -}}
+{{- end -}}
+{{- if $secret -}}
+{{- $accessKey = $secret.data.AWS_ACCESS_KEY_ID | b64dec -}}
+{{- $secretKey = $secret.data.AWS_SECRET_ACCESS_KEY | b64dec -}}
+{{- end -}}
 apiVersion: policy.open-cluster-management.io/v1
 kind: Policy
 metadata:
@@ -35,11 +49,11 @@ spec:
               thanos.yaml: |
                 type: s3
                 config:
-                  bucket: "{{ (lookup "objectbucket.io/v1alpha1" "ObjectBucket" "" "obc-openshift-storage-obc-observability").spec.endpoint.bucketName | default "obc-observability-bucket" }}"
-                  endpoint: "{{ (lookup "objectbucket.io/v1alpha1" "ObjectBucket" "" "obc-openshift-storage-obc-observability").spec.endpoint.bucketHost | default "s3.openshift-storage.svc.cluster.local" }}"
+                  bucket: "{{ $bucketName }}"
+                  endpoint: "{{ $endpoint }}"
                   insecure: false
-                  access_key: "{{ (lookup "v1" "Secret" "openshift-storage" "noobaa-admin").data.AWS_ACCESS_KEY_ID | b64dec | default "placeholder" }}"
-                  secret_key: "{{ (lookup "v1" "Secret" "openshift-storage" "noobaa-admin").data.AWS_SECRET_ACCESS_KEY | b64dec | default "placeholder" }}"
+                  access_key: "{{ $accessKey }}"
+                  secret_key: "{{ $secretKey }}"
                   http_config:
                     insecure_skip_verify: true
                     tls_config:
