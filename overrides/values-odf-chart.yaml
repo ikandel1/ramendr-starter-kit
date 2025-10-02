@@ -5,4 +5,4 @@ storageSystem:
     useSpecificNodes: false
 
 objectStorage:
-  enable: false
+  enable: true
