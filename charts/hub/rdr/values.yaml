@@ -19,7 +19,7 @@ regionalDR:
                 type: m5.4xlarge
           compute:
             - name: worker
-              replicas: 3
+              replicas: 4
               platform:
                 aws:
                   type: m5.4xlarge
@@ -58,7 +58,7 @@ regionalDR:
                 type: m5.4xlarge
           compute:
             - name: worker
-              replicas: 3
+              replicas: 4
               platform:
                 aws:
                   type: m5.4xlarge
