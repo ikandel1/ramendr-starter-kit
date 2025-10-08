@@ -14,4 +14,5 @@ spec:
     to the Advanced Cluster Management hub.
   policies:
   - policy-ocm-observability
+  - policy-observability-storage
   - policy-cluster-proxy-ca-complete

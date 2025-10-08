@@ -38,6 +38,17 @@ spec:
         - complianceType: musthave
           objectDefinition:
             apiVersion: v1
+            kind: Secret
+            metadata:
+              name: observability-storage-secret
+              namespace: open-cluster-management-observability
+            type: Opaque
+            data:
+              access_key: ""
+              secret_key: ""
+        - complianceType: musthave
+          objectDefinition:
+            apiVersion: v1
             kind: Namespace
             metadata:
               name: open-cluster-management-observability
@@ -88,10 +99,6 @@ spec:
               observabilityAddonSpec:
                 enableMetrics: true
                 interval: 30
-              storageConfigObject:
-                metricObjectStorage:
-                  name: obc-observability
-                  namespace: openshift-storage
               advanced:
                 retentionConfig:
                   retentionResolutionRaw: 5d

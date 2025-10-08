@@ -1,0 +1,99 @@
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  annotations:
+    policy.open-cluster-management.io/categories: CA Assessment Authorization and
+      Monitoring
+    policy.open-cluster-management.io/controls: CA-7 Continuous Monitoring
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+    argocd.argoproj.io/compare-options: IgnoreExtraneous
+    argocd.argoproj.io/sync-options: Prune=false
+    argocd.argoproj.io/health-check-ignore: "true"
+    argocd.argoproj.io/hook: "PostSync"
+  labels:
+    open-cluster-management.io/policy-set: openshift-plus
+  name: policy-observability-storage
+  namespace: policies
+spec:
+  disabled: false
+  policy-templates:
+  - objectDefinition:
+      apiVersion: policy.open-cluster-management.io/v1
+      kind: ConfigurationPolicy
+      metadata:
+        name: policy-observability-storage
+        annotations:
+          argocd.argoproj.io/compare-options: IgnoreExtraneous
+      spec:
+        object-templates:
+        - complianceType: musthave
+          objectDefinition:
+            apiVersion: batch/v1
+            kind: Job
+            metadata:
+              name: configure-observability-storage
+              namespace: open-cluster-management-observability
+              labels:
+                app.kubernetes.io/name: observability
+                app.kubernetes.io/component: storage-config
+              annotations:
+                argocd.argoproj.io/hook: "PostSync"
+                argocd.argoproj.io/hook-delete-policy: "HookSucceeded"
+            spec:
+              template:
+                spec:
+                  containers:
+                  - name: storage-configurator
+                    image: registry.redhat.io/openshift4/ose-cli:latest
+                    resources:
+                      requests:
+                        memory: "64Mi"
+                        cpu: "100m"
+                      limits:
+                        memory: "128Mi"
+                        cpu: "200m"
+                    command:
+                    - /bin/bash
+                    - -c
+                    - |
+                      set -euo pipefail
+                      
+                      echo "Configuring observability storage..."
+                      
+                      # Wait for OBC to be ready
+                      echo "Waiting for ObjectBucketClaim to be ready..."
+                      oc wait --for=condition=Bound objectbucketclaim/obc-observability -n openshift-storage --timeout=300s || echo "OBC not ready, continuing..."
+                      
+                      # Get OBC details
+                      OBC_NAME=$(oc get objectbucketclaim obc-observability -n openshift-storage -o jsonpath='{.metadata.name}' 2>/dev/null || echo "")
+                      OBC_NAMESPACE=$(oc get objectbucketclaim obc-observability -n openshift-storage -o jsonpath='{.metadata.namespace}' 2>/dev/null || echo "")
+                      
+                      if [[ -n "$OBC_NAME" && -n "$OBC_NAMESPACE" ]]; then
+                        echo "OBC found: $OBC_NAME in namespace $OBC_NAMESPACE"
+                        
+                        # Update MultiClusterObservability with storage config
+                        echo "Updating MultiClusterObservability with storage configuration..."
+                        oc patch multiclusterobservability observability -n open-cluster-management-observability --type=merge --patch='{
+                          "spec": {
+                            "storageConfigObject": {
+                              "metricObjectStorage": {
+                                "name": "'$OBC_NAME'",
+                                "namespace": "'$OBC_NAMESPACE'"
+                              }
+                            }
+                          }
+                        }' || echo "Failed to update MultiClusterObservability"
+                      else
+                        echo "OBC not found, skipping storage configuration"
+                      fi
+                      
+                      echo "Observability storage configuration completed"
+                    env:
+                    - name: KUBECONFIG
+                      value: ""
+                  restartPolicy: Never
+                  serviceAccountName: observability-controller-sa
+              backoffLimit: 1
+              activeDeadlineSeconds: 300
+        remediationAction: enforce
+        severity: medium
