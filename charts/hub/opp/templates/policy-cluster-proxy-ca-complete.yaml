@@ -137,7 +137,7 @@ spec:
                                       cluster.open-cluster-management.io/type: managed
                                   data:
                                     ca-bundle.crt: |
-$(echo "$(cat $CA_BUNDLE_FILE)" | sed 's/^/                                      /')
+                                      $(echo "$(cat $CA_BUNDLE_FILE)" | sed 's/^/                                      /')
                               - complianceType: musthave
                                 objectDefinition:
                                   apiVersion: config.openshift.io/v1
