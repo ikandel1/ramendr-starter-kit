@@ -66,9 +66,23 @@ spec:
                       CA_BUNDLE_FILE="/tmp/combined-ca-bundle.crt"
                       touch "$CA_BUNDLE_FILE"
                       
-                      # Extract hub cluster CA
+                      # Extract hub cluster CA from multiple sources
                       echo "Extracting hub cluster CA..."
-                      oc get configmap -n openshift-config-managed trusted-ca-bundle -o jsonpath="{.data['ca-bundle\.crt']}" >> "$CA_BUNDLE_FILE" 2>/dev/null || echo "Warning: Could not extract hub cluster CA"
+                      
+                      # Try openshift-config-managed first
+                      if oc get configmap -n openshift-config-managed trusted-ca-bundle -o jsonpath="{.data['ca-bundle\.crt']}" >> "$CA_BUNDLE_FILE" 2>/dev/null; then
+                        echo "  CA extracted from openshift-config-managed"
+                      fi
+                      
+                      # Try openshift-config as backup
+                      if oc get configmap -n openshift-config trusted-ca-bundle -o jsonpath="{.data['ca-bundle\.crt']}" >> "$CA_BUNDLE_FILE" 2>/dev/null; then
+                        echo "  CA extracted from openshift-config"
+                      fi
+                      
+                      # Try cluster proxy CA
+                      if oc get proxy cluster -o jsonpath='{.spec.trustedCA.name}' 2>/dev/null | xargs -I {} oc get configmap {} -n openshift-config -o jsonpath='{.data.ca-bundle\.crt}' >> "$CA_BUNDLE_FILE" 2>/dev/null; then
+                        echo "  CA extracted from cluster proxy"
+                      fi
                       
                       # Get managed clusters and extract their CAs
                       echo "Extracting managed cluster CAs..."
@@ -89,8 +103,18 @@ spec:
                         fi
                       done
                       
-                      # Clean up duplicates
+                      # Clean up duplicates and validate content
                       sort "$CA_BUNDLE_FILE" | uniq > "${CA_BUNDLE_FILE}.tmp" && mv "${CA_BUNDLE_FILE}.tmp" "$CA_BUNDLE_FILE"
+                      
+                      # Validate CA bundle has content
+                      if [[ ! -s "$CA_BUNDLE_FILE" ]] || [[ ! $(grep -c "BEGIN CERTIFICATE" "$CA_BUNDLE_FILE") -gt 0 ]]; then
+                        echo "ERROR: No valid CA certificates found in bundle"
+                        echo "CA bundle content:"
+                        cat "$CA_BUNDLE_FILE"
+                        exit 1
+                      fi
+                      
+                      echo "CA bundle validation successful. Found $(grep -c "BEGIN CERTIFICATE" "$CA_BUNDLE_FILE") certificates."
                       
                       # Create ConfigMap on hub cluster
                       echo "Creating cluster-proxy-ca-bundle ConfigMap on hub..."
@@ -138,7 +162,7 @@ spec:
                                       cluster.open-cluster-management.io/type: managed
                                   data:
                                     ca-bundle.crt: |
-                                      $(echo "$(cat $CA_BUNDLE_FILE)" | sed 's/^/                                      /')
+$(cat "$CA_BUNDLE_FILE" | sed 's/^/                                      /')
                               - complianceType: musthave
                                 objectDefinition:
                                   apiVersion: config.openshift.io/v1
