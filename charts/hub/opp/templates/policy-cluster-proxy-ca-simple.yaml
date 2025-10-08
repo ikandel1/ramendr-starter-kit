@@ -96,8 +96,9 @@ spec:
                         echo "Processing cluster: $cluster"
                         
                         # Try ManagedClusterInfo first
-                        if oc get managedclusterinfo -n "$cluster" -o jsonpath='{.items[0].status.distributionInfo.ocp.managedClusterClientConfig.caBundle}' 2>/dev/null | grep -q "BEGIN CERTIFICATE"; then
-                          oc get managedclusterinfo -n "$cluster" -o jsonpath='{.items[0].status.distributionInfo.ocp.managedClusterClientConfig.caBundle}' | base64 -d >> "$CA_BUNDLE_FILE" 2>/dev/null
+                        CA_DATA=$(oc get managedclusterinfo -n "$cluster" -o jsonpath='{.items[0].status.distributionInfo.ocp.managedClusterClientConfig.caBundle}' 2>/dev/null)
+                        if [[ -n "$CA_DATA" ]] && echo "$CA_DATA" | base64 -d 2>/dev/null | grep -q "BEGIN CERTIFICATE"; then
+                          echo "$CA_DATA" | base64 -d >> "$CA_BUNDLE_FILE" 2>/dev/null
                           echo "  CA extracted from ManagedClusterInfo"
                         else
                           echo "  No CA found in ManagedClusterInfo for $cluster"
