@@ -28,6 +28,7 @@ spec:
       spec:
         object-templates:
         - complianceType: musthave
+          recreateOption: recreate
           objectDefinition:
             apiVersion: batch/v1
             kind: Job
