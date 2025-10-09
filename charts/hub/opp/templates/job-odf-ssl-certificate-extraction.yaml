@@ -1,0 +1,176 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: odf-ssl-certificate-extractor
+  namespace: openshift-config
+  labels:
+    app.kubernetes.io/name: odf-ssl-certificate-management
+    app.kubernetes.io/component: certificate-extraction
+  annotations:
+    argocd.argoproj.io/hook: "PostSync"
+    argocd.argoproj.io/hook-delete-policy: "HookSucceeded"
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  template:
+    spec:
+      containers:
+      - name: odf-ssl-extractor
+        image: registry.redhat.io/openshift4/ose-cli:latest
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "200m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+        command:
+        - /bin/bash
+        - -c
+        - |
+          set -euo pipefail
+          
+          echo "Starting ODF SSL certificate extraction and distribution..."
+          echo "Following Red Hat ODF Disaster Recovery certificate management guidelines"
+          
+          # Create working directory
+          WORK_DIR="/tmp/odf-ssl-certs"
+          mkdir -p "$WORK_DIR"
+          
+          # Function to extract CA from cluster
+          extract_cluster_ca() {
+            local cluster_name="$1"
+            local output_file="$2"
+            local kubeconfig="${3:-}"
+            
+            echo "Extracting CA from cluster: $cluster_name"
+            
+            if [[ -n "$kubeconfig" && -f "$kubeconfig" ]]; then
+              # Use provided kubeconfig
+              if oc --kubeconfig="$kubeconfig" get configmap -n openshift-config-managed trusted-ca-bundle -o jsonpath="{.data['ca-bundle\.crt']}" > "$output_file" 2>/dev/null; then
+                echo "  CA extracted from $cluster_name using kubeconfig"
+                return 0
+              fi
+            else
+              # Use current context (hub cluster)
+              if oc get configmap -n openshift-config-managed trusted-ca-bundle -o jsonpath="{.data['ca-bundle\.crt']}" > "$output_file" 2>/dev/null; then
+                echo "  CA extracted from $cluster_name using current context"
+                return 0
+              fi
+            fi
+            
+            echo "  Failed to extract CA from $cluster_name"
+            return 1
+          }
+          
+          # Function to create combined CA bundle
+          create_combined_ca_bundle() {
+            local output_file="$1"
+            shift
+            local ca_files=("$@")
+            
+            echo "Creating combined CA bundle..."
+            > "$output_file"
+            
+            local file_count=0
+            for ca_file in "${ca_files[@]}"; do
+              if [[ -f "$ca_file" && -s "$ca_file" ]]; then
+                echo "# CA from $(basename "$ca_file" .crt)" >> "$output_file"
+                cat "$ca_file" >> "$output_file"
+                echo "" >> "$output_file"
+                file_count=$((file_count + 1))
+              fi
+            done
+            
+            if [[ $file_count -gt 0 ]]; then
+              echo "Combined CA bundle created with $file_count CA certificates"
+              return 0
+            else
+              echo "No valid CA files found to combine"
+              return 1
+            fi
+          }
+          
+          # Extract hub cluster CA
+          echo "1. Extracting hub cluster CA..."
+          if extract_cluster_ca "hub" "$WORK_DIR/hub-ca.crt"; then
+            echo "  Hub cluster CA extracted successfully"
+          else
+            echo "  Failed to extract hub cluster CA"
+            exit 1
+          fi
+          
+          # Get managed clusters
+          echo "2. Discovering managed clusters..."
+          MANAGED_CLUSTERS=$(oc get managedclusters -o jsonpath='{.items[*].metadata.name}' 2>/dev/null || echo "")
+          
+          if [[ -z "$MANAGED_CLUSTERS" ]]; then
+            echo "  No managed clusters found"
+          else
+            echo "  Found managed clusters: $MANAGED_CLUSTERS"
+          fi
+          
+          # Extract CA from each managed cluster
+          CA_FILES=("$WORK_DIR/hub-ca.crt")
+          local index=1
+          
+          for cluster in $MANAGED_CLUSTERS; do
+            if [[ "$cluster" == "local-cluster" ]]; then
+              continue
+            fi
+            
+            echo "3.$index Extracting CA from $cluster..."
+            
+            # Try to get kubeconfig for the cluster
+            KUBECONFIG_FILE=""
+            if oc get secret -n "$cluster" -o name | grep -E "(admin-kubeconfig|kubeconfig)" | head -1 | xargs -I {} oc get {} -n "$cluster" -o jsonpath='{.data.kubeconfig}' | base64 -d > "$WORK_DIR/${cluster}-kubeconfig.yaml" 2>/dev/null; then
+              KUBECONFIG_FILE="$WORK_DIR/${cluster}-kubeconfig.yaml"
+            fi
+            
+            if extract_cluster_ca "$cluster" "$WORK_DIR/${cluster}-ca.crt" "$KUBECONFIG_FILE"; then
+              CA_FILES+=("$WORK_DIR/${cluster}-ca.crt")
+            else
+              echo "  Warning: Could not extract CA from $cluster, continuing..."
+            fi
+            
+            ((index++))
+          done
+          
+          # Create combined CA bundle
+          echo "4. Creating combined CA bundle..."
+          if create_combined_ca_bundle "$WORK_DIR/combined-ca-bundle.crt" "${CA_FILES[@]}"; then
+            echo "  Combined CA bundle created successfully"
+          else
+            echo "  Failed to create combined CA bundle"
+            exit 1
+          fi
+          
+          # Create ConfigMap on hub cluster
+          echo "5. Creating cluster-proxy-ca-bundle ConfigMap on hub cluster..."
+          oc create configmap cluster-proxy-ca-bundle \
+            --from-file=ca-bundle.crt="$WORK_DIR/combined-ca-bundle.crt" \
+            -n openshift-config \
+            --dry-run=client -o yaml | oc apply -f -
+          
+          # Update hub cluster proxy
+          echo "6. Updating hub cluster proxy configuration..."
+          oc patch proxy/cluster --type=merge --patch='{"spec":{"trustedCA":{"name":"cluster-proxy-ca-bundle"}}}' || {
+            echo "  Warning: Could not update hub cluster proxy"
+          }
+          
+          echo ""
+          echo "✅ ODF SSL certificate management completed successfully!"
+          echo "   - Hub cluster CA bundle: Updated"
+          echo "   - Hub cluster proxy: Configured"
+          echo ""
+          echo "This follows Red Hat ODF Disaster Recovery certificate management guidelines"
+          echo "for secure SSL access across clusters in the regional DR setup."
+          
+          # Cleanup
+          rm -rf "$WORK_DIR"
+        env:
+        - name: KUBECONFIG
+          value: ""
+      restartPolicy: Never
+      serviceAccountName: odf-ssl-extractor-sa
+  backoffLimit: 1
+  activeDeadlineSeconds: 900

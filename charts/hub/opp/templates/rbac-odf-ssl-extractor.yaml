@@ -1,0 +1,45 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: odf-ssl-extractor-sa
+  namespace: openshift-config
+  labels:
+    app.kubernetes.io/name: odf-ssl-certificate-management
+    app.kubernetes.io/component: certificate-extraction
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: odf-ssl-extractor-role
+  labels:
+    app.kubernetes.io/name: odf-ssl-certificate-management
+    app.kubernetes.io/component: certificate-extraction
+rules:
+- apiGroups: [""]
+  resources: ["configmaps", "secrets"]
+  verbs: ["get", "list", "create", "update", "patch"]
+- apiGroups: ["config.openshift.io"]
+  resources: ["proxies"]
+  verbs: ["get", "patch"]
+- apiGroups: ["cluster.open-cluster-management.io"]
+  resources: ["managedclusters"]
+  verbs: ["get", "list"]
+- apiGroups: ["internal.open-cluster-management.io"]
+  resources: ["managedclusterinfos"]
+  verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: odf-ssl-extractor-rolebinding
+  labels:
+    app.kubernetes.io/name: odf-ssl-certificate-management
+    app.kubernetes.io/component: certificate-extraction
+subjects:
+- kind: ServiceAccount
+  name: odf-ssl-extractor-sa
+  namespace: openshift-config
+roleRef:
+  kind: ClusterRole
+  name: odf-ssl-extractor-role
+  apiGroup: rbac.authorization.k8s.io

@@ -42,9 +42,14 @@ spec:
                 policy.open-cluster-management.io/description: "Combined CA bundle for ODF disaster recovery SSL access"
             data:
               ca-bundle.crt: |
-                # This ConfigMap contains the combined CA bundle from hub and managed clusters
-                # It is created and maintained by the ODF SSL certificate management system
-                # for secure SSL access across clusters in the regional DR setup
+                # This ConfigMap will be populated by the odf-ssl-certificate-extractor Job
+                # with actual CA certificates from hub and managed clusters
+                # The Job extracts certificates from:
+                # - Hub cluster: openshift-config-managed/trusted-ca-bundle
+                # - Managed clusters: via kubeconfig secrets
+                # 
+                # To manually populate this ConfigMap, run:
+                # ./scripts/manual-ca-extraction.sh
         - complianceType: musthave
           objectDefinition:
             apiVersion: config.openshift.io/v1
