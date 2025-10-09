@@ -40,11 +40,6 @@ spec:
                 app.kubernetes.io/component: ca-bundle
               annotations:
                 policy.open-cluster-management.io/description: "CA bundle for ODF disaster recovery SSL access"
-            data:
-              ca-bundle.crt: |
-                # This ConfigMap will be populated by the hub cluster policy
-                # and distributed to all managed clusters for secure SSL access
-                # in the ODF disaster recovery setup
         - complianceType: musthave
           objectDefinition:
             apiVersion: config.openshift.io/v1
