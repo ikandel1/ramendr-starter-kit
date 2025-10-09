@@ -64,10 +64,5 @@ spec:
                 app.kubernetes.io/component: verification
               annotations:
                 policy.open-cluster-management.io/description: "ODF SSL certificate verification status"
-            data:
-              ssl-configuration: "enabled"
-              certificate-management: "automated"
-              last-updated: "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-              odf-dr-ssl: "configured"
         remediationAction: enforce
         severity: high
