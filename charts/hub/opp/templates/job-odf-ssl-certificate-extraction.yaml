@@ -145,23 +145,23 @@ spec:
             exit 1
           fi
           
-          # Create ConfigMap on hub cluster
-          echo "5. Creating cluster-proxy-ca-bundle ConfigMap on hub cluster..."
+          # Create or update ConfigMap on hub cluster
+          echo "5. Creating/updating cluster-proxy-ca-bundle ConfigMap on hub cluster..."
           
-          # Remove existing ConfigMap if it exists
+          # Check if ConfigMap exists
           if oc get configmap cluster-proxy-ca-bundle -n openshift-config >/dev/null 2>&1; then
-            echo "  ConfigMap already exists, deleting..."
-            oc delete configmap cluster-proxy-ca-bundle -n openshift-config
-            sleep 2
+            echo "  ConfigMap exists, patching..."
+            oc patch configmap cluster-proxy-ca-bundle -n openshift-config \
+              --type=merge \
+              --patch='{"data":{"ca-bundle.crt":"# ODF SSL Certificate Bundle for Disaster Recovery\n# This ConfigMap is managed by the ODF SSL certificate management system\n# For production use, manually populate with actual certificates"}}'
+          else
+            echo "  ConfigMap does not exist, creating..."
+            oc create configmap cluster-proxy-ca-bundle \
+              --from-literal=ca-bundle.crt="# ODF SSL Certificate Bundle for Disaster Recovery" \
+              -n openshift-config
           fi
           
-          # Create a minimal ConfigMap with placeholder content
-          echo "  Creating minimal ConfigMap..."
-          oc create configmap cluster-proxy-ca-bundle \
-            --from-literal=ca-bundle.crt="# ODF SSL Certificate Bundle for Disaster Recovery" \
-            -n openshift-config
-          
-          echo "  ConfigMap created successfully with placeholder content"
+          echo "  ConfigMap created/updated successfully"
           echo "  Note: This is a placeholder ConfigMap for policy compliance"
           echo "  For production use, manually populate with actual certificates"
           
