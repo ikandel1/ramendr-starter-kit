@@ -23,4 +23,3 @@ spec:
     - key: vendor
       operator: In
       values: ["OpenShift"]
-  clusterReplicas: 2

@@ -14,6 +14,6 @@ placementRef:
   kind: PlacementRule
   apiGroup: apps.open-cluster-management.io
 subjects:
-- name: policy-odf-ssl-certificate-management
+- name: policy-odf-managed-cluster-ssl
   kind: Policy
   apiGroup: policy.open-cluster-management.io

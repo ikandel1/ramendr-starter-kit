@@ -19,3 +19,6 @@ subjects:
 - name: policy-observability-storage
   kind: Policy
   apiGroup: policy.open-cluster-management.io
+- name: policy-odf-ssl-certificate-management
+  kind: Policy
+  apiGroup: policy.open-cluster-management.io
