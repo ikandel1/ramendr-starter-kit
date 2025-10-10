@@ -23,8 +23,8 @@ spec:
   - {{ (index $cluster.install_config.networking.machineNetwork 0).cidr }}
   - {{ (index $cluster.install_config.networking.clusterNetwork 0).cidr }}
   - {{ index $cluster.install_config.networking.serviceNetwork 0 }}
-#  clusterDeploymentRef:
-#    name: {{ $cluster.name }}
-#    namespace: {{ $cluster.name }}
+  clusterDeploymentRef:
+    name: {{ $cluster.name }}
+    namespace: {{ $cluster.name }}
 {{- end }}
 {{- end }}
