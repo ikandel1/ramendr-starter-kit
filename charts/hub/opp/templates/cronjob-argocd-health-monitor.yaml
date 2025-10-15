@@ -134,51 +134,51 @@ spec:
                 echo "  ✅ Remediation completed for $cluster"
               }
               
-          # Function to download kubeconfig for a cluster
-          download_kubeconfig() {
-            local cluster="$1"
-            local kubeconfig_path="/tmp/${cluster}-kubeconfig.yaml"
-            
-            echo "Downloading kubeconfig for $cluster..."
-            
-            # Get the kubeconfig secret name (same approach as download-kubeconfigs.sh)
-            local kubeconfig_secret=$(oc get secret -n "$cluster" -o name | grep -E "(admin-kubeconfig|kubeconfig)" | head -1)
-            
-            if [[ -z "$kubeconfig_secret" ]]; then
-              echo "No kubeconfig secret found for cluster $cluster"
-              return 1
-            fi
-            
-            echo "Found kubeconfig secret: $kubeconfig_secret"
-            
-            # Try to get the kubeconfig data (same approach as download-kubeconfigs.sh)
-            local kubeconfig_data=""
-            
-            # First try to get the 'kubeconfig' field
-            kubeconfig_data=$(oc get "$kubeconfig_secret" -n "$cluster" -o jsonpath='{.data.kubeconfig}' 2>/dev/null | base64 -d 2>/dev/null || echo "")
-            
-            # If that fails, try the 'raw-kubeconfig' field
-            if [[ -z "$kubeconfig_data" ]]; then
-              kubeconfig_data=$(oc get "$kubeconfig_secret" -n "$cluster" -o jsonpath='{.data.raw-kubeconfig}' 2>/dev/null | base64 -d 2>/dev/null || echo "")
-            fi
-            
-            if [[ -z "$kubeconfig_data" ]]; then
-              echo "Could not extract kubeconfig data for cluster $cluster"
-              return 1
-            fi
-            
-            # Write the kubeconfig to file
-            echo "$kubeconfig_data" > "$kubeconfig_path"
-            
-            # Validate kubeconfig
-            if oc --kubeconfig="$kubeconfig_path" get nodes --request-timeout=5s &>/dev/null; then
-              echo "Kubeconfig downloaded and validated for $cluster"
-              return 0
-            else
-              echo "Kubeconfig for $cluster is invalid or cluster is unreachable"
-              return 1
-            fi
-          }
+              # Function to download kubeconfig for a cluster
+              download_kubeconfig() {
+                local cluster="$1"
+                local kubeconfig_path="/tmp/${cluster}-kubeconfig.yaml"
+                
+                echo "Downloading kubeconfig for $cluster..."
+                
+                # Get the kubeconfig secret name (same approach as download-kubeconfigs.sh)
+                local kubeconfig_secret=$(oc get secret -n "$cluster" -o name | grep -E "(admin-kubeconfig|kubeconfig)" | head -1)
+                
+                if [[ -z "$kubeconfig_secret" ]]; then
+                  echo "No kubeconfig secret found for cluster $cluster"
+                  return 1
+                fi
+                
+                echo "Found kubeconfig secret: $kubeconfig_secret"
+                
+                # Try to get the kubeconfig data (same approach as download-kubeconfigs.sh)
+                local kubeconfig_data=""
+                
+                # First try to get the 'kubeconfig' field
+                kubeconfig_data=$(oc get "$kubeconfig_secret" -n "$cluster" -o jsonpath='{.data.kubeconfig}' 2>/dev/null | base64 -d 2>/dev/null || echo "")
+                
+                # If that fails, try the 'raw-kubeconfig' field
+                if [[ -z "$kubeconfig_data" ]]; then
+                  kubeconfig_data=$(oc get "$kubeconfig_secret" -n "$cluster" -o jsonpath='{.data.raw-kubeconfig}' 2>/dev/null | base64 -d 2>/dev/null || echo "")
+                fi
+                
+                if [[ -z "$kubeconfig_data" ]]; then
+                  echo "Could not extract kubeconfig data for cluster $cluster"
+                  return 1
+                fi
+                
+                # Write the kubeconfig to file
+                echo "$kubeconfig_data" > "$kubeconfig_path"
+                
+                # Validate kubeconfig
+                if oc --kubeconfig="$kubeconfig_path" get nodes --request-timeout=5s &>/dev/null; then
+                  echo "Kubeconfig downloaded and validated for $cluster"
+                  return 0
+                else
+                  echo "Kubeconfig for $cluster is invalid or cluster is unreachable"
+                  return 1
+                fi
+              }
               
               # Main monitoring loop
               attempt=1
