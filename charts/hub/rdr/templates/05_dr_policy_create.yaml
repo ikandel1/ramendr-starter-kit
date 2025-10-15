@@ -1,18 +1,26 @@
 {{- range .Values.regionalDR }}
 {{ $clusterSet := .name }}
 {{ $clusters := .clusters }}
-{{- range .intervals }}
+{{- range .drpolicies }}
+{{ $vm := coalesce (and .vmSupport "vm") "novm" }}
+{{ $autoName := printf "%s-%s" .interval $vm }}
+{{ $name := coalesce .name $autoName -}}
 ---
 apiVersion: ramendr.openshift.io/v1alpha1
 kind: DRPolicy
 metadata:
-  name: {{ $clusterSet }}-drsync-{{ . }}
+  name: {{ $name }}
   annotations:
     argocd.argoproj.io/sync-wave: "5"
 spec:
   drClusters:
   - {{ $clusters.primary.name }}
   - {{ $clusters.secondary.name }}
-  schedulingInterval: {{ . }}
+  schedulingInterval: {{ .interval }}
+{{- if .vmSupport }}
+  replicationClassSelector:
+    matchLabels:
+      replication.storage.openshift.io/flatten-mode: force    
+{{- end }}
 {{- end }}
 {{- end }}
