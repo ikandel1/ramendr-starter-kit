@@ -27,7 +27,7 @@ spec:
           # Configuration
           MAX_ATTEMPTS=5
           SLEEP_INTERVAL=30
-          ARGOCD_NAMESPACE="argocd"
+          ARGOCD_NAMESPACE="openshift-gitops"
           HEALTH_CHECK_TIMEOUT=60
           
           # Function to check if a cluster is wedged
@@ -43,17 +43,37 @@ spec:
               return 0
             fi
             
+            # Determine expected ArgoCD instance name based on cluster
+            local argocd_instance_name=""
+            case "$cluster" in
+              "ocp-primary")
+                argocd_instance_name="resilient-1-gitops-server"
+                ;;
+              "ocp-secondary")
+                argocd_instance_name="resilient-2-gitops-server"
+                ;;
+              "local-cluster")
+                argocd_instance_name="openshift-gitops"
+                ;;
+              *)
+                echo "❌ Unknown cluster $cluster - cannot determine ArgoCD instance name"
+                return 0
+                ;;
+            esac
+            
+            echo "Checking for ArgoCD instance: $argocd_instance_name"
+            
             # Check if ArgoCD server is responding
             local argocd_server_pods=$(oc --kubeconfig="$kubeconfig" get pods -n "$ARGOCD_NAMESPACE" -l app.kubernetes.io/name=argocd-server --no-headers 2>/dev/null | wc -l)
             if [[ $argocd_server_pods -eq 0 ]]; then
-              echo "❌ No ArgoCD server pods found on $cluster - cluster appears wedged"
+              echo "❌ No ArgoCD server pods found on $cluster (instance: $argocd_instance_name) - cluster appears wedged"
               return 0
             fi
             
             # Check if ArgoCD server is ready
             local ready_pods=$(oc --kubeconfig="$kubeconfig" get pods -n "$ARGOCD_NAMESPACE" -l app.kubernetes.io/name=argocd-server --field-selector=status.phase=Running --no-headers 2>/dev/null | wc -l)
             if [[ $ready_pods -eq 0 ]]; then
-              echo "❌ No ready ArgoCD server pods on $cluster - cluster appears wedged"
+              echo "❌ No ready ArgoCD server pods on $cluster (instance: $argocd_instance_name) - cluster appears wedged"
               return 0
             fi
             
@@ -77,9 +97,29 @@ spec:
             
             echo "🔧 Remediating wedged cluster: $cluster"
             
-            # Delete all ArgoCD pods to force restart
-            echo "  Deleting ArgoCD pods on $cluster..."
-            oc --kubeconfig="$kubeconfig" delete pods -n "$ARGOCD_NAMESPACE" --all --grace-period=0 --force &>/dev/null || true
+            # Stop all ArgoCD instances by scaling down deployments
+            echo "  Stopping all ArgoCD instances on $cluster..."
+            oc --kubeconfig="$kubeconfig" scale deployment --all -n "$ARGOCD_NAMESPACE" --replicas=0 &>/dev/null || true
+            oc --kubeconfig="$kubeconfig" scale statefulset --all -n "$ARGOCD_NAMESPACE" --replicas=0 &>/dev/null || true
+            
+            # Wait for all instances to stop
+            echo "  Waiting for ArgoCD instances to stop..."
+            local attempt=1
+            while [[ $attempt -le 30 ]]; do
+              local running_pods=$(oc --kubeconfig="$kubeconfig" get pods -n "$ARGOCD_NAMESPACE" --field-selector=status.phase=Running --no-headers 2>/dev/null | wc -l)
+              if [[ $running_pods -eq 0 ]]; then
+                echo "  ✅ All ArgoCD instances stopped on $cluster"
+                break
+              fi
+              echo "  Waiting for instances to stop... (attempt $attempt/30)"
+              sleep 5
+              ((attempt++))
+            done
+            
+            # Restart all ArgoCD instances by scaling up deployments
+            echo "  Restarting all ArgoCD instances on $cluster..."
+            oc --kubeconfig="$kubeconfig" scale deployment --all -n "$ARGOCD_NAMESPACE" --replicas=1 &>/dev/null || true
+            oc --kubeconfig="$kubeconfig" scale statefulset --all -n "$ARGOCD_NAMESPACE" --replicas=1 &>/dev/null || true
             
             # Wait for pods to restart
             echo "  Waiting for ArgoCD pods to restart on $cluster..."
