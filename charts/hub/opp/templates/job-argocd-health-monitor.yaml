@@ -152,40 +152,41 @@ spec:
             local kubeconfig="$2"
             
             echo "🔧 Remediating wedged cluster: $cluster with MAXIMUM VIOLENCE"
+            echo "  🎯 Focus: Only deleting resources in $ARGOCD_NAMESPACE namespace (openshift-gitops)"
             
-            # MAXIMUM VIOLENCE: Delete everything in the openshift-gitops namespace
+            # MAXIMUM VIOLENCE: Delete everything in the openshift-gitops namespace only
             echo "  💥 MAXIMUM VIOLENCE: Deleting ALL resources in $ARGOCD_NAMESPACE namespace..."
             
             # Delete all deployments with maximum force
-            echo "  💥 Force deleting all deployments..."
+            echo "  💥 Force deleting all deployments in $ARGOCD_NAMESPACE..."
             oc --kubeconfig="$kubeconfig" delete deployment --all -n "$ARGOCD_NAMESPACE" --grace-period=0 --force &>/dev/null || true
             
             # Delete all statefulsets with maximum force
-            echo "  💥 Force deleting all statefulsets..."
+            echo "  💥 Force deleting all statefulsets in $ARGOCD_NAMESPACE..."
             oc --kubeconfig="$kubeconfig" delete statefulset --all -n "$ARGOCD_NAMESPACE" --grace-period=0 --force &>/dev/null || true
             
             # Delete all daemonsets with maximum force
-            echo "  💥 Force deleting all daemonsets..."
+            echo "  💥 Force deleting all daemonsets in $ARGOCD_NAMESPACE..."
             oc --kubeconfig="$kubeconfig" delete daemonset --all -n "$ARGOCD_NAMESPACE" --grace-period=0 --force &>/dev/null || true
             
             # Delete all pods with maximum force
-            echo "  💥 Force deleting all pods..."
+            echo "  💥 Force deleting all pods in $ARGOCD_NAMESPACE..."
             oc --kubeconfig="$kubeconfig" delete pods --all -n "$ARGOCD_NAMESPACE" --grace-period=0 --force &>/dev/null || true
             
             # Delete all services with maximum force
-            echo "  💥 Force deleting all services..."
+            echo "  💥 Force deleting all services in $ARGOCD_NAMESPACE..."
             oc --kubeconfig="$kubeconfig" delete service --all -n "$ARGOCD_NAMESPACE" --grace-period=0 --force &>/dev/null || true
             
             # Delete all configmaps with maximum force
-            echo "  💥 Force deleting all configmaps..."
+            echo "  💥 Force deleting all configmaps in $ARGOCD_NAMESPACE..."
             oc --kubeconfig="$kubeconfig" delete configmap --all -n "$ARGOCD_NAMESPACE" --grace-period=0 --force &>/dev/null || true
             
             # Delete all secrets with maximum force
-            echo "  💥 Force deleting all secrets..."
+            echo "  💥 Force deleting all secrets in $ARGOCD_NAMESPACE..."
             oc --kubeconfig="$kubeconfig" delete secret --all -n "$ARGOCD_NAMESPACE" --grace-period=0 --force &>/dev/null || true
             
             # Delete all persistent volume claims with maximum force
-            echo "  💥 Force deleting all PVCs..."
+            echo "  💥 Force deleting all PVCs in $ARGOCD_NAMESPACE..."
             oc --kubeconfig="$kubeconfig" delete pvc --all -n "$ARGOCD_NAMESPACE" --grace-period=0 --force &>/dev/null || true
             
             # Wait for everything to be deleted
@@ -202,14 +203,15 @@ spec:
               ((attempt++))
             done
             
-            # MAXIMUM VIOLENCE: Remove finalizers and delete namespace
-            echo "  💥 MAXIMUM VIOLENCE: Removing finalizers and deleting $ARGOCD_NAMESPACE namespace..."
+            # MAXIMUM VIOLENCE: Remove finalizers and delete openshift-gitops namespace only
+            echo "  💥 MAXIMUM VIOLENCE: Removing finalizers and deleting $ARGOCD_NAMESPACE namespace only..."
+            echo "  🎯 Target: Only $ARGOCD_NAMESPACE namespace (openshift-gitops) - cluster-specific namespaces are preserved"
             
-            # Remove finalizers from the namespace to allow deletion
+            # Remove finalizers from the openshift-gitops namespace to allow deletion
             echo "  🔧 Removing finalizers from $ARGOCD_NAMESPACE namespace..."
             oc --kubeconfig="$kubeconfig" patch namespace "$ARGOCD_NAMESPACE" --type=merge -p='{"metadata":{"finalizers":[]}}' &>/dev/null || true
             
-            # Delete the namespace
+            # Delete the openshift-gitops namespace
             echo "  💥 Deleting $ARGOCD_NAMESPACE namespace..."
             oc --kubeconfig="$kubeconfig" delete namespace "$ARGOCD_NAMESPACE" --grace-period=0 --force &>/dev/null || true
             
@@ -241,6 +243,7 @@ spec:
             done
             
             echo "  💥 MAXIMUM VIOLENCE remediation completed for $cluster"
+            echo "  🎯 Remediated: Only $ARGOCD_NAMESPACE namespace (openshift-gitops) was affected"
             echo "  ⚠️  Note: The openshift-gitops-operator will need to be reinstalled to restore functionality"
           }
           
