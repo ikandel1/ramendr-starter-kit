@@ -81,7 +81,7 @@ spec:
                   # Check if openshift-gitops namespace exists and is wedged
                   if oc --kubeconfig="$kubeconfig" get namespace "$ARGOCD_NAMESPACE" &>/dev/null; then
                     echo "🔍 Checking if openshift-gitops instance is wedged on $cluster..."
-                    local openshift_gitops_pods=$(oc --kubeconfig="$kubeconfig" get pods -n "$ARGOCD_NAMESPACE" -l app.kubernetes.io/name=argocd-server --field-selector=status.phase=Running --no-headers 2>/dev/null | wc -l)
+                    local openshift_gitops_pods=$(oc --kubeconfig="$kubeconfig" get pods -n "$ARGOCD_NAMESPACE" -l app.kubernetes.io/name=openshift-gitops-server --field-selector=status.phase=Running --no-headers 2>/dev/null | wc -l)
                     echo "Found $openshift_gitops_pods ArgoCD server pods in $ARGOCD_NAMESPACE namespace on $cluster"
                     
                     if [[ $openshift_gitops_pods -gt 0 ]]; then
@@ -95,7 +95,7 @@ spec:
                 fi
                 
                 # Check if the cluster-specific ArgoCD instance exists and is running
-                local cluster_argocd_pods=$(oc --kubeconfig="$kubeconfig" get pods -n "$cluster_argocd_namespace" -l app.kubernetes.io/name=argocd-server --field-selector=status.phase=Running --no-headers 2>/dev/null | wc -l)
+                local cluster_argocd_pods=$(oc --kubeconfig="$kubeconfig" get pods -n "$cluster_argocd_namespace" -l app.kubernetes.io/name=openshift-gitops-server --field-selector=status.phase=Running --no-headers 2>/dev/null | wc -l)
                 echo "Found $cluster_argocd_pods ArgoCD server pods in $cluster_argocd_namespace namespace on $cluster"
                 
                 if [[ $cluster_argocd_pods -eq 0 ]]; then
@@ -104,7 +104,7 @@ spec:
                   # Check if openshift-gitops instance is wedged
                   if oc --kubeconfig="$kubeconfig" get namespace "$ARGOCD_NAMESPACE" &>/dev/null; then
                     echo "🔍 Checking if openshift-gitops instance is wedged on $cluster..."
-                    local openshift_gitops_pods=$(oc --kubeconfig="$kubeconfig" get pods -n "$ARGOCD_NAMESPACE" -l app.kubernetes.io/name=argocd-server --field-selector=status.phase=Running --no-headers 2>/dev/null | wc -l)
+                    local openshift_gitops_pods=$(oc --kubeconfig="$kubeconfig" get pods -n "$ARGOCD_NAMESPACE" -l app.kubernetes.io/name=openshift-gitops-server --field-selector=status.phase=Running --no-headers 2>/dev/null | wc -l)
                     echo "Found $openshift_gitops_pods ArgoCD server pods in $ARGOCD_NAMESPACE namespace on $cluster"
                     
                     if [[ $openshift_gitops_pods -gt 0 ]]; then
@@ -187,7 +187,7 @@ spec:
                 
                 # Trigger ArgoCD refresh/sync
                 echo "  Triggering ArgoCD refresh on $cluster..."
-                local server_pod=$(oc --kubeconfig="$kubeconfig" get pods -n "$ARGOCD_NAMESPACE" -l app.kubernetes.io/name=argocd-server --field-selector=status.phase=Running -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+                local server_pod=$(oc --kubeconfig="$kubeconfig" get pods -n "$ARGOCD_NAMESPACE" -l app.kubernetes.io/name=openshift-gitops-server --field-selector=status.phase=Running -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
                 if [[ -n "$server_pod" ]]; then
                   # Trigger refresh of all applications
                   oc --kubeconfig="$kubeconfig" exec -n "$ARGOCD_NAMESPACE" "$server_pod" -- argocd app list -o name | while read app; do
