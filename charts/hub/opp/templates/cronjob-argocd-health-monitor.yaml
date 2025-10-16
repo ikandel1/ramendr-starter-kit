@@ -109,6 +109,12 @@ spec:
                 oc --kubeconfig="$kubeconfig" scale deployment --all -n "$ARGOCD_NAMESPACE" --replicas=0 &>/dev/null || true
                 oc --kubeconfig="$kubeconfig" scale statefulset --all -n "$ARGOCD_NAMESPACE" --replicas=0 &>/dev/null || true
                 
+                # If scaling doesn't work, try more aggressive cleanup
+                echo "  Attempting aggressive cleanup for stuck deployments..."
+                oc --kubeconfig="$kubeconfig" delete deployment --all -n "$ARGOCD_NAMESPACE" --grace-period=0 --force &>/dev/null || true
+                oc --kubeconfig="$kubeconfig" delete statefulset --all -n "$ARGOCD_NAMESPACE" --grace-period=0 --force &>/dev/null || true
+                oc --kubeconfig="$kubeconfig" delete pods --all -n "$ARGOCD_NAMESPACE" --grace-period=0 --force &>/dev/null || true
+                
                 # Wait for all instances to stop
                 echo "  Waiting for ArgoCD instances to stop..."
                 local attempt=1
@@ -173,12 +179,19 @@ spec:
                 echo "  ✅ Remediation completed for $cluster"
               }
               
-              # Function to download kubeconfig for a cluster
+              # Function to download kubeconfig for a cluster (using same logic as download-kubeconfigs.sh)
               download_kubeconfig() {
                 local cluster="$1"
                 local kubeconfig_path="/tmp/${cluster}-kubeconfig.yaml"
                 
                 echo "Downloading kubeconfig for $cluster..."
+                
+                # Check if cluster is available (same as download-kubeconfigs.sh)
+                local cluster_status=$(oc get managedcluster "$cluster" -o jsonpath='{.status.conditions[?(@.type=="ManagedClusterConditionAvailable")].status}' 2>/dev/null || echo "Unknown")
+                if [[ "$cluster_status" != "True" ]]; then
+                  echo "Cluster $cluster is not available (status: $cluster_status), skipping..."
+                  return 1
+                fi
                 
                 # Get the kubeconfig secret name (same approach as download-kubeconfigs.sh)
                 local kubeconfig_secret=$(oc get secret -n "$cluster" -o name | grep -E "(admin-kubeconfig|kubeconfig)" | head -1)
@@ -209,12 +222,21 @@ spec:
                 # Write the kubeconfig to file
                 echo "$kubeconfig_data" > "$kubeconfig_path"
                 
-                # Validate kubeconfig
-                if oc --kubeconfig="$kubeconfig_path" get nodes --request-timeout=5s &>/dev/null; then
+                # Validate kubeconfig (same as download-kubeconfigs.sh)
+                if oc --kubeconfig="$kubeconfig_path" get nodes &>/dev/null; then
                   echo "Kubeconfig downloaded and validated for $cluster"
+                  
+                  # Show cluster info (same as download-kubeconfigs.sh)
+                  local server_url=$(echo "$kubeconfig_data" | grep -E "^\s*server:" | head -1 | awk '{print $2}' || echo "Unknown")
+                  echo "  Server URL: $server_url"
+                  
+                  local node_count=$(oc --kubeconfig="$kubeconfig_path" get nodes --no-headers 2>/dev/null | wc -l || echo "0")
+                  echo "  Node count: $node_count"
+                  
                   return 0
                 else
-                  echo "Kubeconfig for $cluster is invalid or cluster is unreachable"
+                  echo "Downloaded kubeconfig for $cluster but it may not be valid"
+                  echo "  File saved as: $kubeconfig_path"
                   return 1
                 fi
               }
