@@ -30,65 +30,68 @@ spec:
           ARGOCD_NAMESPACE="openshift-gitops"
           HEALTH_CHECK_TIMEOUT=60
           
-          # Function to check if a cluster is wedged
-          check_cluster_wedged() {
-            local cluster="$1"
-            local kubeconfig="$2"
-            
-            echo "Checking if $cluster is wedged..."
-            
-            # Check if we can connect to the cluster
-            if ! oc --kubeconfig="$kubeconfig" get nodes --request-timeout=10s &>/dev/null; then
-              echo "❌ Cannot connect to $cluster - cluster appears wedged"
-              return 0
-            fi
-            
-            # Determine expected ArgoCD instance name based on cluster
-            local argocd_instance_name=""
-            case "$cluster" in
-              "ocp-primary")
-                argocd_instance_name="resilient-1-gitops-server"
-                ;;
-              "ocp-secondary")
-                argocd_instance_name="resilient-2-gitops-server"
-                ;;
-              "local-cluster")
-                argocd_instance_name="openshift-gitops"
-                ;;
-              *)
-                echo "❌ Unknown cluster $cluster - cannot determine ArgoCD instance name"
-                return 0
-                ;;
-            esac
-            
-            echo "Checking for ArgoCD instance: $argocd_instance_name"
-            
-            # Check if ArgoCD server is responding
-            local argocd_server_pods=$(oc --kubeconfig="$kubeconfig" get pods -n "$ARGOCD_NAMESPACE" -l app.kubernetes.io/name=argocd-server --no-headers 2>/dev/null | wc -l)
-            if [[ $argocd_server_pods -eq 0 ]]; then
-              echo "❌ No ArgoCD server pods found on $cluster (instance: $argocd_instance_name) - cluster appears wedged"
-              return 0
-            fi
-            
-            # Check if ArgoCD server is ready
-            local ready_pods=$(oc --kubeconfig="$kubeconfig" get pods -n "$ARGOCD_NAMESPACE" -l app.kubernetes.io/name=argocd-server --field-selector=status.phase=Running --no-headers 2>/dev/null | wc -l)
-            if [[ $ready_pods -eq 0 ]]; then
-              echo "❌ No ready ArgoCD server pods on $cluster (instance: $argocd_instance_name) - cluster appears wedged"
-              return 0
-            fi
-            
-            # Check ArgoCD server health endpoint
-            local server_pod=$(oc --kubeconfig="$kubeconfig" get pods -n "$ARGOCD_NAMESPACE" -l app.kubernetes.io/name=argocd-server --field-selector=status.phase=Running -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
-            if [[ -n "$server_pod" ]]; then
-              if ! oc --kubeconfig="$kubeconfig" exec -n "$ARGOCD_NAMESPACE" "$server_pod" -- curl -s -f http://localhost:8080/healthz --max-time 10 &>/dev/null; then
-                echo "❌ ArgoCD server health check failed on $cluster - cluster appears wedged"
-                return 0
-              fi
-            fi
-            
-            echo "✅ $cluster appears healthy"
-            return 1
-          }
+              # Function to check if a cluster is wedged
+              check_cluster_wedged() {
+                local cluster="$1"
+                local kubeconfig="$2"
+                
+                echo "Checking if $cluster is wedged..."
+                
+                # Check if we can connect to the cluster
+                if ! oc --kubeconfig="$kubeconfig" get nodes --request-timeout=10s &>/dev/null; then
+                  echo "❌ Cannot connect to $cluster - cluster appears wedged"
+                  return 0
+                fi
+                
+                # Determine expected ArgoCD instance name based on cluster
+                local argocd_instance_name=""
+                case "$cluster" in
+                  "ocp-primary")
+                    argocd_instance_name="resilient-1-gitops-server"
+                    ;;
+                  "ocp-secondary")
+                    argocd_instance_name="resilient-2-gitops-server"
+                    ;;
+                  "local-cluster")
+                    argocd_instance_name="openshift-gitops"
+                    ;;
+                  *)
+                    echo "❌ Unknown cluster $cluster - cannot determine ArgoCD instance name"
+                    return 0
+                    ;;
+                esac
+                
+                echo "Checking for ArgoCD instance: $argocd_instance_name"
+                
+                # Check if the specific ArgoCD instance exists and is running
+                # Look for deployments or statefulsets with the expected name
+                local argocd_deployment=$(oc --kubeconfig="$kubeconfig" get deployment -n "$ARGOCD_NAMESPACE" "$argocd_instance_name" 2>/dev/null || echo "")
+                local argocd_statefulset=$(oc --kubeconfig="$kubeconfig" get statefulset -n "$ARGOCD_NAMESPACE" "$argocd_instance_name" 2>/dev/null || echo "")
+                
+                if [[ -z "$argocd_deployment" && -z "$argocd_statefulset" ]]; then
+                  echo "❌ ArgoCD instance $argocd_instance_name not found on $cluster - cluster appears wedged"
+                  return 0
+                fi
+                
+                # Check if the ArgoCD instance is running
+                local running_pods=$(oc --kubeconfig="$kubeconfig" get pods -n "$ARGOCD_NAMESPACE" -l app.kubernetes.io/name=argocd-server --field-selector=status.phase=Running --no-headers 2>/dev/null | wc -l)
+                if [[ $running_pods -eq 0 ]]; then
+                  echo "❌ No running ArgoCD server pods on $cluster (instance: $argocd_instance_name) - cluster appears wedged"
+                  return 0
+                fi
+                
+                # Check ArgoCD server health endpoint
+                local server_pod=$(oc --kubeconfig="$kubeconfig" get pods -n "$ARGOCD_NAMESPACE" -l app.kubernetes.io/name=argocd-server --field-selector=status.phase=Running -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+                if [[ -n "$server_pod" ]]; then
+                  if ! oc --kubeconfig="$kubeconfig" exec -n "$ARGOCD_NAMESPACE" "$server_pod" -- curl -s -f http://localhost:8080/healthz --max-time 10 &>/dev/null; then
+                    echo "❌ ArgoCD server health check failed on $cluster - cluster appears wedged"
+                    return 0
+                  fi
+                fi
+                
+                echo "✅ $cluster appears healthy"
+                return 1
+              }
           
           # Function to remediate a wedged cluster
           remediate_wedged_cluster() {
