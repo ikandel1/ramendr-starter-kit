@@ -162,60 +162,60 @@ spec:
             echo "  💥 Force deleting all PVCs..."
             oc --kubeconfig="$kubeconfig" delete pvc --all -n "$ARGOCD_NAMESPACE" --grace-period=0 --force &>/dev/null || true
             
-  # Wait for everything to be deleted
-  echo "  ⏳ Waiting for all resources to be deleted..."
-  attempt=1
-  while [[ $attempt -le 20 ]]; do
-    remaining_resources=$(oc --kubeconfig="$kubeconfig" get all -n "$ARGOCD_NAMESPACE" --no-headers 2>/dev/null | wc -l)
-    if [[ $remaining_resources -eq 0 ]]; then
-      echo "  ✅ All resources deleted from $ARGOCD_NAMESPACE namespace"
-      break
-    fi
-    echo "  Waiting for resources to be deleted... (attempt $attempt/20) - $remaining_resources resources remaining"
-    sleep 5
-    ((attempt++))
-  done
+            # Wait for everything to be deleted
+            echo "  ⏳ Waiting for all resources to be deleted..."
+            attempt=1
+            while [[ $attempt -le 20 ]]; do
+              remaining_resources=$(oc --kubeconfig="$kubeconfig" get all -n "$ARGOCD_NAMESPACE" --no-headers 2>/dev/null | wc -l)
+              if [[ $remaining_resources -eq 0 ]]; then
+                echo "  ✅ All resources deleted from $ARGOCD_NAMESPACE namespace"
+                break
+              fi
+              echo "  Waiting for resources to be deleted... (attempt $attempt/20) - $remaining_resources resources remaining"
+              sleep 5
+              ((attempt++))
+            done
             
             # MAXIMUM VIOLENCE: Delete and recreate the namespace
             echo "  💥 MAXIMUM VIOLENCE: Deleting and recreating $ARGOCD_NAMESPACE namespace..."
             oc --kubeconfig="$kubeconfig" delete namespace "$ARGOCD_NAMESPACE" --grace-period=0 --force &>/dev/null || true
             
-  # Wait for namespace to be deleted
-  echo "  ⏳ Waiting for namespace to be deleted..."
-  attempt=1
-  while [[ $attempt -le 20 ]]; do
-    if ! oc --kubeconfig="$kubeconfig" get namespace "$ARGOCD_NAMESPACE" &>/dev/null; then
-      echo "  ✅ Namespace $ARGOCD_NAMESPACE deleted"
-      break
-    fi
-    echo "  Waiting for namespace to be deleted... (attempt $attempt/20)"
-    sleep 5
-    ((attempt++))
-  done
+            # Wait for namespace to be deleted
+            echo "  ⏳ Waiting for namespace to be deleted..."
+            attempt=1
+            while [[ $attempt -le 20 ]]; do
+              if ! oc --kubeconfig="$kubeconfig" get namespace "$ARGOCD_NAMESPACE" &>/dev/null; then
+                echo "  ✅ Namespace $ARGOCD_NAMESPACE deleted"
+                break
+              fi
+              echo "  Waiting for namespace to be deleted... (attempt $attempt/20)"
+              sleep 5
+              ((attempt++))
+            done
             
             # Recreate the namespace
             echo "  🔄 Recreating $ARGOCD_NAMESPACE namespace..."
             oc --kubeconfig="$kubeconfig" create namespace "$ARGOCD_NAMESPACE" &>/dev/null || true
             
-  # Wait for namespace to be ready
-  echo "  ⏳ Waiting for namespace to be ready..."
-  attempt=1
-  while [[ $attempt -le 20 ]]; do
-    if oc --kubeconfig="$kubeconfig" get namespace "$ARGOCD_NAMESPACE" &>/dev/null; then
-      echo "  ✅ Namespace $ARGOCD_NAMESPACE recreated"
-      break
-    fi
-    echo "  Waiting for namespace to be ready... (attempt $attempt/20)"
-    sleep 5
-    ((attempt++))
-  done
+            # Wait for namespace to be ready
+            echo "  ⏳ Waiting for namespace to be ready..."
+            attempt=1
+            while [[ $attempt -le 20 ]]; do
+              if oc --kubeconfig="$kubeconfig" get namespace "$ARGOCD_NAMESPACE" &>/dev/null; then
+                echo "  ✅ Namespace $ARGOCD_NAMESPACE recreated"
+                break
+              fi
+              echo "  Waiting for namespace to be ready... (attempt $attempt/20)"
+              sleep 5
+              ((attempt++))
+            done
             
             echo "  💥 MAXIMUM VIOLENCE remediation completed for $cluster"
             echo "  ⚠️  Note: The openshift-gitops-operator will need to be reinstalled to restore functionality"
           }
           
-              # Function to download kubeconfig for a cluster (using same logic as download-kubeconfigs.sh)
-              download_kubeconfig() {
+          # Function to download kubeconfig for a cluster (using same logic as download-kubeconfigs.sh)
+          download_kubeconfig() {
                 local cluster="$1"
                 local kubeconfig_path="/tmp/${cluster}-kubeconfig.yaml"
                 
