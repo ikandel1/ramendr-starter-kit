@@ -291,6 +291,7 @@ spec:
                 wedged_clusters=()
                 
                 # Check each managed cluster
+                kubeconfig_failures=()
                 for cluster in $MANAGED_CLUSTERS; do
                   if [[ "$cluster" == "local-cluster" ]]; then
                     continue
@@ -307,22 +308,26 @@ spec:
                       wedged_clusters+=("$cluster")
                     fi
                   else
-                    echo "⚠️  Cannot access $cluster - may be wedged"
-                    wedged_clusters+=("$cluster")
+                    echo "❌ Failed to download or validate kubeconfig for $cluster"
+                    kubeconfig_failures+=("$cluster")
                   fi
                 done
+                
+                # If there are kubeconfig failures, this is a critical error
+                if [[ ${#kubeconfig_failures[@]} -gt 0 ]]; then
+                  echo "❌ Critical error: Cannot access clusters due to kubeconfig issues: ${kubeconfig_failures[*]}"
+                  echo "This indicates a problem with cluster connectivity or kubeconfig secrets"
+                  echo "The health monitor cannot function without valid kubeconfigs"
+                  exit 1
+                fi
                 
                 # Remediate wedged clusters
                 if [[ ${#wedged_clusters[@]} -gt 0 ]]; then
                   echo "Found wedged clusters: ${wedged_clusters[*]}"
                   
                   for cluster in "${wedged_clusters[@]}"; do
-                    if download_kubeconfig "$cluster"; then
-                      kubeconfig_path="/tmp/${cluster}-kubeconfig.yaml"
-                      remediate_wedged_cluster "$cluster" "$kubeconfig_path"
-                    else
-                      echo "⚠️  Cannot remediate $cluster - kubeconfig is invalid"
-                    fi
+                    kubeconfig_path="/tmp/${cluster}-kubeconfig.yaml"
+                    remediate_wedged_cluster "$cluster" "$kubeconfig_path"
                   done
                   
                   echo "✅ Remediation completed for wedged clusters"
