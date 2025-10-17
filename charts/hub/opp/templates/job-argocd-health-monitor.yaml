@@ -74,7 +74,7 @@ spec:
                   # Check if openshift-gitops namespace exists and is wedged
                   if oc --kubeconfig="$kubeconfig" get namespace "$ARGOCD_NAMESPACE" &>/dev/null; then
                     echo "🔍 Checking if openshift-gitops instance is wedged on $cluster..."
-                    local openshift_gitops_pods=$(oc --kubeconfig="$kubeconfig" get pods -n "$ARGOCD_NAMESPACE" -l app.kubernetes.io/name=openshift-gitops-server --field-selector=status.phase=Running --no-headers 2>/dev/null | wc -l)
+                    local openshift_gitops_pods=$(oc --kubeconfig="$kubeconfig" get pods -n "$ARGOCD_NAMESPACE" -l app.kubernetes.io/name=gitops-server --field-selector=status.phase=Running --no-headers 2>/dev/null | wc -l)
                     echo "Found $openshift_gitops_pods ArgoCD server pods in $ARGOCD_NAMESPACE namespace on $cluster"
                     
                     if [[ $openshift_gitops_pods -gt 0 ]]; then
@@ -88,7 +88,7 @@ spec:
                 fi
                 
                 # Check if the cluster-specific ArgoCD instance exists and is running
-                local cluster_argocd_pods=$(oc --kubeconfig="$kubeconfig" get pods -n "$cluster_argocd_namespace" -l app.kubernetes.io/name=openshift-gitops-server --field-selector=status.phase=Running --no-headers 2>/dev/null | wc -l)
+                local cluster_argocd_pods=$(oc --kubeconfig="$kubeconfig" get pods -n "$cluster_argocd_namespace" -l app.kubernetes.io/name=gitops-server --field-selector=status.phase=Running --no-headers 2>/dev/null | wc -l)
                 echo "Found $cluster_argocd_pods ArgoCD server pods in $cluster_argocd_namespace namespace on $cluster"
                 
                 if [[ $cluster_argocd_pods -eq 0 ]]; then
@@ -96,7 +96,7 @@ spec:
                   
                   # Check if openshift-gitops instance is running
                   if oc --kubeconfig="$kubeconfig" get namespace "$ARGOCD_NAMESPACE" &>/dev/null; then
-                    local openshift_gitops_pods=$(oc --kubeconfig="$kubeconfig" get pods -n "$ARGOCD_NAMESPACE" -l app.kubernetes.io/name=openshift-gitops-server --field-selector=status.phase=Running --no-headers 2>/dev/null | wc -l)
+                    local openshift_gitops_pods=$(oc --kubeconfig="$kubeconfig" get pods -n "$ARGOCD_NAMESPACE" -l app.kubernetes.io/name=gitops-server --field-selector=status.phase=Running --no-headers 2>/dev/null | wc -l)
                     echo "Found $openshift_gitops_pods ArgoCD server pods in $ARGOCD_NAMESPACE namespace on $cluster"
                     
                     if [[ $openshift_gitops_pods -gt 0 ]]; then
@@ -107,7 +107,7 @@ spec:
                       local wait_attempt=1
                       while [[ $wait_attempt -le 60 ]]; do  # 60 attempts × 5 seconds = 5 minutes
                         sleep 5
-                        cluster_argocd_pods=$(oc --kubeconfig="$kubeconfig" get pods -n "$cluster_argocd_namespace" -l app.kubernetes.io/name=openshift-gitops-server --field-selector=status.phase=Running --no-headers 2>/dev/null | wc -l)
+                        cluster_argocd_pods=$(oc --kubeconfig="$kubeconfig" get pods -n "$cluster_argocd_namespace" -l app.kubernetes.io/name=gitops-server --field-selector=status.phase=Running --no-headers 2>/dev/null | wc -l)
                         
                         if [[ $cluster_argocd_pods -gt 0 ]]; then
                           echo "✅ Cluster-specific ArgoCD instance found after waiting (attempt $wait_attempt/60)"
@@ -122,7 +122,7 @@ spec:
                       done
                       
                       # Re-check the cluster-specific ArgoCD pods after waiting
-                      cluster_argocd_pods=$(oc --kubeconfig="$kubeconfig" get pods -n "$cluster_argocd_namespace" -l app.kubernetes.io/name=openshift-gitops-server --field-selector=status.phase=Running --no-headers 2>/dev/null | wc -l)
+                      cluster_argocd_pods=$(oc --kubeconfig="$kubeconfig" get pods -n "$cluster_argocd_namespace" -l app.kubernetes.io/name=gitops-server --field-selector=status.phase=Running --no-headers 2>/dev/null | wc -l)
                       echo "After waiting: Found $cluster_argocd_pods ArgoCD server pods in $cluster_argocd_namespace namespace on $cluster"
                       
                       if [[ $cluster_argocd_pods -eq 0 ]]; then
@@ -130,7 +130,7 @@ spec:
                         
                         # Check if the openshift-gitops instance has been running for more than 10 minutes
                         echo "🔍 Checking if openshift-gitops instance has been running for more than 10 minutes..."
-                        local openshift_gitops_pod_age=$(oc --kubeconfig="$kubeconfig" get pods -n "$ARGOCD_NAMESPACE" -l app.kubernetes.io/name=openshift-gitops-server --field-selector=status.phase=Running -o jsonpath='{.items[0].metadata.creationTimestamp}' 2>/dev/null || echo "")
+                        local openshift_gitops_pod_age=$(oc --kubeconfig="$kubeconfig" get pods -n "$ARGOCD_NAMESPACE" -l app.kubernetes.io/name=gitops-server --field-selector=status.phase=Running -o jsonpath='{.items[0].metadata.creationTimestamp}' 2>/dev/null || echo "")
                         
                         if [[ -n "$openshift_gitops_pod_age" ]]; then
                           # Convert creation timestamp to seconds since epoch
@@ -162,7 +162,7 @@ spec:
                   
                   # Check if the openshift-gitops instance has been running for more than 10 minutes
                   echo "🔍 Checking if openshift-gitops instance has been running for more than 10 minutes..."
-                  local openshift_gitops_pod_age=$(oc --kubeconfig="$kubeconfig" get pods -n "$ARGOCD_NAMESPACE" -l app.kubernetes.io/name=openshift-gitops-server --field-selector=status.phase=Running -o jsonpath='{.items[0].metadata.creationTimestamp}' 2>/dev/null || echo "")
+                  local openshift_gitops_pod_age=$(oc --kubeconfig="$kubeconfig" get pods -n "$ARGOCD_NAMESPACE" -l app.kubernetes.io/name=gitops-server --field-selector=status.phase=Running -o jsonpath='{.items[0].metadata.creationTimestamp}' 2>/dev/null || echo "")
                   
                   if [[ -n "$openshift_gitops_pod_age" ]]; then
                     # Convert creation timestamp to seconds since epoch
@@ -191,7 +191,7 @@ spec:
                   
                   # Check if the openshift-gitops instance has been running for more than 10 minutes
                   echo "🔍 Checking if openshift-gitops instance has been running for more than 10 minutes..."
-                  local openshift_gitops_pod_age=$(oc --kubeconfig="$kubeconfig" get pods -n "$ARGOCD_NAMESPACE" -l app.kubernetes.io/name=openshift-gitops-server --field-selector=status.phase=Running -o jsonpath='{.items[0].metadata.creationTimestamp}' 2>/dev/null || echo "")
+                  local openshift_gitops_pod_age=$(oc --kubeconfig="$kubeconfig" get pods -n "$ARGOCD_NAMESPACE" -l app.kubernetes.io/name=gitops-server --field-selector=status.phase=Running -o jsonpath='{.items[0].metadata.creationTimestamp}' 2>/dev/null || echo "")
                   
                   if [[ -n "$openshift_gitops_pod_age" ]]; then
                     # Convert creation timestamp to seconds since epoch
