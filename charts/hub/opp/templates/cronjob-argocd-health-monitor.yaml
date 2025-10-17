@@ -323,6 +323,7 @@ spec:
                 if [[ ${#unavailable_clusters[@]} -gt 0 ]]; then
                   echo "⏳ Waiting for clusters to be ready: ${unavailable_clusters[*]}"
                   echo "Clusters must be available and joined before health checks can begin"
+                  echo "This is normal during initial cluster deployment - clusters may take several minutes to become ready"
                   sleep $SLEEP_INTERVAL
                   ((attempt++))
                   continue
@@ -353,12 +354,36 @@ spec:
                   fi
                 done
                 
-                # If there are kubeconfig failures, this is a critical error
+                # If there are kubeconfig failures, check if clusters are still coming up
                 if [[ ${#kubeconfig_failures[@]} -gt 0 ]]; then
-                  echo "❌ Critical error: Cannot access clusters due to kubeconfig issues: ${kubeconfig_failures[*]}"
-                  echo "This indicates a problem with cluster connectivity or kubeconfig secrets"
-                  echo "The health monitor cannot function without valid kubeconfigs"
-                  exit 1
+                  echo "⚠️  Kubeconfig failures detected: ${kubeconfig_failures[*]}"
+                  echo "This may indicate clusters are still starting up or there are connectivity issues"
+                  
+                  # Check if any of the failed clusters are still not available/joined
+                  still_starting=false
+                  for failed_cluster in "${kubeconfig_failures[@]}"; do
+                    cluster_status=$(oc get managedcluster "$failed_cluster" -o jsonpath='{.status.conditions[?(@.type=="ManagedClusterConditionAvailable")].status}' 2>/dev/null || echo "Unknown")
+                    joined_status=$(oc get managedcluster "$failed_cluster" -o jsonpath='{.status.conditions[?(@.type=="ManagedClusterJoined")].status}' 2>/dev/null || echo "Unknown")
+                    
+                    if [[ "$cluster_status" != "True" || "$joined_status" != "True" ]]; then
+                      echo "  Cluster $failed_cluster is still starting up (available: $cluster_status, joined: $joined_status)"
+                      still_starting=true
+                    fi
+                  done
+                  
+                  if [[ "$still_starting" == "true" ]]; then
+                    echo "⏳ Some clusters are still starting up - waiting for them to be ready"
+                    echo "This is normal during initial cluster deployment"
+                    sleep $SLEEP_INTERVAL
+                    ((attempt++))
+                    continue
+                  else
+                    echo "❌ Critical error: Cannot access clusters due to kubeconfig issues: ${kubeconfig_failures[*]}"
+                    echo "All clusters appear to be available and joined, but kubeconfig access is failing"
+                    echo "This indicates a problem with cluster connectivity or kubeconfig secrets"
+                    echo "The health monitor cannot function without valid kubeconfigs"
+                    exit 1
+                  fi
                 fi
                 
                 # Remediate wedged clusters
