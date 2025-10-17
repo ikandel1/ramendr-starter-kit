@@ -191,16 +191,16 @@ spec:
                 fi
               }
           
-          # Function to remediate a wedged cluster with maximum violence
+          # Function to remediate a wedged cluster with MAXIMUM VIOLENCE
           remediate_wedged_cluster() {
             local cluster="$1"
             local kubeconfig="$2"
             
             echo "🔧 Remediating wedged cluster: $cluster with MAXIMUM VIOLENCE"
-            echo "  🎯 Focus: Only deleting resources in $ARGOCD_NAMESPACE namespace (openshift-gitops)"
+            echo "  🎯 Focus: Complete destruction of openshift-gitops namespace and all related resources"
             
-            # MAXIMUM VIOLENCE: Delete everything in the openshift-gitops namespace only
-            echo "  💥 MAXIMUM VIOLENCE: Deleting ALL resources in $ARGOCD_NAMESPACE namespace..."
+            # STEP 1: MAXIMUM VIOLENCE - Delete ALL resources in openshift-gitops namespace
+            echo "  💥 STEP 1: MAXIMUM VIOLENCE - Deleting ALL resources in $ARGOCD_NAMESPACE namespace..."
             
             # Delete all deployments with maximum force
             echo "  💥 Force deleting all deployments in $ARGOCD_NAMESPACE..."
@@ -234,23 +234,63 @@ spec:
             echo "  💥 Force deleting all PVCs in $ARGOCD_NAMESPACE..."
             oc --kubeconfig="$kubeconfig" delete pvc --all -n "$ARGOCD_NAMESPACE" --grace-period=0 --force &>/dev/null || true
             
+            # Delete all ingresses with maximum force
+            echo "  💥 Force deleting all ingresses in $ARGOCD_NAMESPACE..."
+            oc --kubeconfig="$kubeconfig" delete ingress --all -n "$ARGOCD_NAMESPACE" --grace-period=0 --force &>/dev/null || true
+            
+            # Delete all routes with maximum force
+            echo "  💥 Force deleting all routes in $ARGOCD_NAMESPACE..."
+            oc --kubeconfig="$kubeconfig" delete route --all -n "$ARGOCD_NAMESPACE" --grace-period=0 --force &>/dev/null || true
+            
+            # Delete all network policies with maximum force
+            echo "  💥 Force deleting all network policies in $ARGOCD_NAMESPACE..."
+            oc --kubeconfig="$kubeconfig" delete networkpolicy --all -n "$ARGOCD_NAMESPACE" --grace-period=0 --force &>/dev/null || true
+            
+            # Delete all service accounts with maximum force
+            echo "  💥 Force deleting all service accounts in $ARGOCD_NAMESPACE..."
+            oc --kubeconfig="$kubeconfig" delete serviceaccount --all -n "$ARGOCD_NAMESPACE" --grace-period=0 --force &>/dev/null || true
+            
+            # Delete all role bindings with maximum force
+            echo "  💥 Force deleting all role bindings in $ARGOCD_NAMESPACE..."
+            oc --kubeconfig="$kubeconfig" delete rolebinding --all -n "$ARGOCD_NAMESPACE" --grace-period=0 --force &>/dev/null || true
+            
+            # Delete all cluster role bindings with maximum force
+            echo "  💥 Force deleting all cluster role bindings in $ARGOCD_NAMESPACE..."
+            oc --kubeconfig="$kubeconfig" delete clusterrolebinding --all -n "$ARGOCD_NAMESPACE" --grace-period=0 --force &>/dev/null || true
+            
+            # Delete all roles with maximum force
+            echo "  💥 Force deleting all roles in $ARGOCD_NAMESPACE..."
+            oc --kubeconfig="$kubeconfig" delete role --all -n "$ARGOCD_NAMESPACE" --grace-period=0 --force &>/dev/null || true
+            
+            # Delete all cluster roles with maximum force
+            echo "  💥 Force deleting all cluster roles in $ARGOCD_NAMESPACE..."
+            oc --kubeconfig="$kubeconfig" delete clusterrole --all -n "$ARGOCD_NAMESPACE" --grace-period=0 --force &>/dev/null || true
+            
+            # Delete all custom resource definitions with maximum force
+            echo "  💥 Force deleting all CRDs in $ARGOCD_NAMESPACE..."
+            oc --kubeconfig="$kubeconfig" delete crd --all -n "$ARGOCD_NAMESPACE" --grace-period=0 --force &>/dev/null || true
+            
+            # Delete all custom resources with maximum force
+            echo "  💥 Force deleting all custom resources in $ARGOCD_NAMESPACE..."
+            oc --kubeconfig="$kubeconfig" delete all --all -n "$ARGOCD_NAMESPACE" --grace-period=0 --force &>/dev/null || true
+            
             # Wait for everything to be deleted
             echo "  ⏳ Waiting for all resources to be deleted..."
             attempt=1
-            while [[ $attempt -le 20 ]]; do
+            while [[ $attempt -le 30 ]]; do
               remaining_resources=$(oc --kubeconfig="$kubeconfig" get all -n "$ARGOCD_NAMESPACE" --no-headers 2>/dev/null | wc -l)
               if [[ $remaining_resources -eq 0 ]]; then
                 echo "  ✅ All resources deleted from $ARGOCD_NAMESPACE namespace"
                 break
               fi
-              echo "  Waiting for resources to be deleted... (attempt $attempt/20) - $remaining_resources resources remaining"
+              echo "  Waiting for resources to be deleted... (attempt $attempt/30) - $remaining_resources resources remaining"
               sleep 5
               ((attempt++))
             done
             
-            # MAXIMUM VIOLENCE: Remove finalizers and delete openshift-gitops namespace only
-            echo "  💥 MAXIMUM VIOLENCE: Removing finalizers and deleting $ARGOCD_NAMESPACE namespace only..."
-            echo "  🎯 Target: Only $ARGOCD_NAMESPACE namespace (openshift-gitops) - cluster-specific namespaces are preserved"
+            # STEP 2: MAXIMUM VIOLENCE - Remove finalizers and delete openshift-gitops namespace
+            echo "  💥 STEP 2: MAXIMUM VIOLENCE - Removing finalizers and deleting $ARGOCD_NAMESPACE namespace..."
+            echo "  🎯 Target: Complete destruction of $ARGOCD_NAMESPACE namespace"
             
             # Remove finalizers from the openshift-gitops namespace to allow deletion
             echo "  🔧 Removing finalizers from $ARGOCD_NAMESPACE namespace..."
@@ -263,33 +303,116 @@ spec:
             # Wait for namespace to be deleted
             echo "  ⏳ Waiting for namespace to be deleted..."
             attempt=1
-            while [[ $attempt -le 20 ]]; do
+            while [[ $attempt -le 30 ]]; do
               if ! oc --kubeconfig="$kubeconfig" get namespace "$ARGOCD_NAMESPACE" &>/dev/null; then
                 echo "  ✅ Namespace $ARGOCD_NAMESPACE deleted"
                 break
               fi
-              echo "  Waiting for namespace to be deleted... (attempt $attempt/20)"
+              echo "  Waiting for namespace to be deleted... (attempt $attempt/30)"
               sleep 5
               ((attempt++))
             done
+            
+            # STEP 3: MAXIMUM VIOLENCE - Clean up any remaining openshift-gitops operator resources
+            echo "  💥 STEP 3: MAXIMUM VIOLENCE - Cleaning up openshift-gitops operator resources..."
+            
+            # Delete openshift-gitops operator subscription
+            echo "  💥 Force deleting openshift-gitops operator subscription..."
+            oc --kubeconfig="$kubeconfig" delete subscription openshift-gitops-operator -n openshift-operators --grace-period=0 --force &>/dev/null || true
+            
+            # Delete openshift-gitops operator CSV
+            echo "  💥 Force deleting openshift-gitops operator CSV..."
+            oc --kubeconfig="$kubeconfig" delete csv openshift-gitops-operator.v1.9.0 -n openshift-operators --grace-period=0 --force &>/dev/null || true
+            
+            # Delete openshift-gitops operator deployment
+            echo "  💥 Force deleting openshift-gitops operator deployment..."
+            oc --kubeconfig="$kubeconfig" delete deployment openshift-gitops-operator -n openshift-operators --grace-period=0 --force &>/dev/null || true
+            
+            # Delete openshift-gitops operator pods
+            echo "  💥 Force deleting openshift-gitops operator pods..."
+            oc --kubeconfig="$kubeconfig" delete pods -l name=openshift-gitops-operator -n openshift-operators --grace-period=0 --force &>/dev/null || true
             
             # Wait for ACM to recreate the namespace automatically
             echo "  ⏳ Waiting for ACM to recreate $ARGOCD_NAMESPACE namespace..."
             echo "  This may take a couple of minutes..."
             attempt=1
-            while [[ $attempt -le 24 ]]; do  # 24 attempts × 5 seconds = 2 minutes
+            while [[ $attempt -le 36 ]]; do  # 36 attempts × 5 seconds = 3 minutes
               if oc --kubeconfig="$kubeconfig" get namespace "$ARGOCD_NAMESPACE" &>/dev/null; then
                 echo "  ✅ Namespace $ARGOCD_NAMESPACE recreated by ACM"
                 break
               fi
-              echo "  Waiting for ACM to recreate namespace... (attempt $attempt/24)"
+              echo "  Waiting for ACM to recreate namespace... (attempt $attempt/36)"
               sleep 5
               ((attempt++))
             done
             
             echo "  💥 MAXIMUM VIOLENCE remediation completed for $cluster"
-            echo "  🎯 Remediated: Only $ARGOCD_NAMESPACE namespace (openshift-gitops) was affected"
+            echo "  🎯 Remediated: Complete destruction of $ARGOCD_NAMESPACE namespace and operator"
             echo "  ⚠️  Note: The openshift-gitops-operator will need to be reinstalled to restore functionality"
+          }
+          
+          # Function to apply MAXIMUM VIOLENCE specifically for wedged openshift-gitops namespace
+          apply_maximum_violence_to_openshift_gitops() {
+            local cluster="$1"
+            local kubeconfig="$2"
+            
+            echo "💥💥💥 APPLYING MAXIMUM VIOLENCE TO OPENSHIFT-GITOPS NAMESPACE 💥💥💥"
+            echo "  🎯 Target: $ARGOCD_NAMESPACE namespace on $cluster"
+            echo "  ⚠️  This will completely destroy the openshift-gitops namespace and all its contents"
+            
+            # Check if openshift-gitops namespace exists
+            if ! oc --kubeconfig="$kubeconfig" get namespace "$ARGOCD_NAMESPACE" &>/dev/null; then
+              echo "  ✅ $ARGOCD_NAMESPACE namespace does not exist - nothing to destroy"
+              return 0
+            fi
+            
+            echo "  🔍 $ARGOCD_NAMESPACE namespace exists - proceeding with MAXIMUM VIOLENCE"
+            
+            # STEP 1: Kill all pods immediately
+            echo "  💥 STEP 1: Killing all pods in $ARGOCD_NAMESPACE namespace..."
+            oc --kubeconfig="$kubeconfig" get pods -n "$ARGOCD_NAMESPACE" --no-headers -o name | xargs -r oc --kubeconfig="$kubeconfig" delete --grace-period=0 --force &>/dev/null || true
+            
+            # STEP 2: Delete all resources by type
+            echo "  💥 STEP 2: Deleting all resources by type in $ARGOCD_NAMESPACE namespace..."
+            for resource_type in deployment statefulset daemonset service configmap secret pvc ingress route networkpolicy serviceaccount rolebinding clusterrolebinding role clusterrole crd; do
+              echo "    💥 Deleting all $resource_type resources..."
+              oc --kubeconfig="$kubeconfig" delete $resource_type --all -n "$ARGOCD_NAMESPACE" --grace-period=0 --force &>/dev/null || true
+            done
+            
+            # STEP 3: Force delete any remaining resources
+            echo "  💥 STEP 3: Force deleting any remaining resources in $ARGOCD_NAMESPACE namespace..."
+            oc --kubeconfig="$kubeconfig" delete all --all -n "$ARGOCD_NAMESPACE" --grace-period=0 --force &>/dev/null || true
+            
+            # STEP 4: Remove finalizers from all remaining resources
+            echo "  💥 STEP 4: Removing finalizers from all remaining resources..."
+            oc --kubeconfig="$kubeconfig" get all -n "$ARGOCD_NAMESPACE" --no-headers -o name | while read resource; do
+              if [[ -n "$resource" ]]; then
+                echo "    🔧 Removing finalizers from $resource..."
+                oc --kubeconfig="$kubeconfig" patch "$resource" -n "$ARGOCD_NAMESPACE" --type=merge -p='{"metadata":{"finalizers":[]}}' &>/dev/null || true
+              fi
+            done
+            
+            # STEP 5: Force delete the namespace
+            echo "  💥 STEP 5: Force deleting $ARGOCD_NAMESPACE namespace..."
+            oc --kubeconfig="$kubeconfig" patch namespace "$ARGOCD_NAMESPACE" --type=merge -p='{"metadata":{"finalizers":[]}}' &>/dev/null || true
+            oc --kubeconfig="$kubeconfig" delete namespace "$ARGOCD_NAMESPACE" --grace-period=0 --force &>/dev/null || true
+            
+            # STEP 6: Wait for complete deletion
+            echo "  ⏳ STEP 6: Waiting for complete deletion of $ARGOCD_NAMESPACE namespace..."
+            attempt=1
+            while [[ $attempt -le 60 ]]; do
+              if ! oc --kubeconfig="$kubeconfig" get namespace "$ARGOCD_NAMESPACE" &>/dev/null; then
+                echo "  ✅ $ARGOCD_NAMESPACE namespace completely deleted"
+                break
+              fi
+              echo "  Waiting for namespace deletion... (attempt $attempt/60)"
+              sleep 5
+              ((attempt++))
+            done
+            
+            echo "  💥💥💥 MAXIMUM VIOLENCE COMPLETED FOR $ARGOCD_NAMESPACE NAMESPACE 💥💥💥"
+            echo "  🎯 Result: $ARGOCD_NAMESPACE namespace has been completely destroyed"
+            echo "  ⚠️  Note: ACM will recreate the namespace automatically"
           }
           
           # Function to download kubeconfig for a cluster (using same logic as download-kubeconfigs.sh)
@@ -474,7 +597,16 @@ spec:
               
               for cluster in "${wedged_clusters[@]}"; do
                 kubeconfig_path="/tmp/${cluster}-kubeconfig.yaml"
-                remediate_wedged_cluster "$cluster" "$kubeconfig_path"
+                
+                # Apply MAXIMUM VIOLENCE specifically for ocp-secondary if it's wedged
+                if [[ "$cluster" == "ocp-secondary" ]]; then
+                  echo "💥💥💥 APPLYING MAXIMUM VIOLENCE TO WEDGED OCP-SECONDARY 💥💥💥"
+                  echo "  🎯 Target: Complete destruction of openshift-gitops namespace on ocp-secondary"
+                  apply_maximum_violence_to_openshift_gitops "$cluster" "$kubeconfig_path"
+                else
+                  echo "🔧 Applying standard remediation to wedged cluster: $cluster"
+                  remediate_wedged_cluster "$cluster" "$kubeconfig_path"
+                fi
               done
               
               echo "✅ Remediation completed for wedged clusters"
