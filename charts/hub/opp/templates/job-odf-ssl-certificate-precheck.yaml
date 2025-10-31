@@ -8,8 +8,12 @@ metadata:
     app.kubernetes.io/component: certificate-precheck
   annotations:
     argocd.argoproj.io/sync-wave: "2"
+    argocd.argoproj.io/sync-options: Prune=false
+    argocd.argoproj.io/compare-options: IgnoreExtraneous
 spec:
-  backoffLimit: 3
+  backoffLimit: 10
+  activeDeadlineSeconds: 7200
+  ttlSecondsAfterFinished: 300
   template:
     spec:
       serviceAccountName: odf-ssl-certificate-precheck

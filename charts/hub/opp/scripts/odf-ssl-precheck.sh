@@ -7,8 +7,10 @@ echo "This job ensures certificates are properly distributed before DR policies 
 # Configuration
 MIN_CERTIFICATES=15
 MIN_BUNDLE_SIZE=20000
-MAX_ATTEMPTS=3
-SLEEP_INTERVAL=10
+MAX_ATTEMPTS=120  
+SLEEP_INTERVAL=30
+CLUSTER_READINESS_MAX_ATTEMPTS=120  # Wait up to 60 minutes for clusters to be ready (120 * 30s)
+CLUSTER_READINESS_SLEEP=30
 
 # Function to clean up placeholder ConfigMaps
 cleanup_placeholder_configmaps() {
@@ -50,6 +52,73 @@ cleanup_placeholder_configmaps() {
   
   echo "✅ Placeholder ConfigMap cleanup completed"
   return 0
+}
+
+# Function to wait for required clusters to be available and joined
+wait_for_cluster_readiness() {
+  echo "🔍 Waiting for required clusters (ocp-primary and ocp-secondary) to be available and joined..."
+  echo "   This may take several minutes during initial cluster deployment"
+  
+  REQUIRED_CLUSTERS=("ocp-primary" "ocp-secondary")
+  attempt=1
+  
+  while [[ $attempt -le $CLUSTER_READINESS_MAX_ATTEMPTS ]]; do
+    echo "=== Cluster Readiness Check Attempt $attempt/$CLUSTER_READINESS_MAX_ATTEMPTS ==="
+    
+    all_ready=true
+    unready_clusters=()
+    
+    for cluster in "${REQUIRED_CLUSTERS[@]}"; do
+      # Check if cluster exists
+      if ! oc get managedcluster "$cluster" &>/dev/null; then
+        echo "  ⏳ Cluster $cluster does not exist yet..."
+        all_ready=false
+        unready_clusters+=("$cluster")
+        continue
+      fi
+      
+      # Check if cluster is available
+      cluster_status=$(oc get managedcluster "$cluster" -o jsonpath='{.status.conditions[?(@.type=="ManagedClusterConditionAvailable")].status}' 2>/dev/null || echo "Unknown")
+      if [[ "$cluster_status" != "True" ]]; then
+        echo "  ⏳ Cluster $cluster is not available yet (status: $cluster_status)"
+        all_ready=false
+        unready_clusters+=("$cluster")
+        continue
+      fi
+      
+      # Check if cluster is joined
+      joined_status=$(oc get managedcluster "$cluster" -o jsonpath='{.status.conditions[?(@.type=="ManagedClusterJoined")].status}' 2>/dev/null || echo "Unknown")
+      if [[ "$joined_status" != "True" ]]; then
+        echo "  ⏳ Cluster $cluster is not joined yet (status: $joined_status)"
+        all_ready=false
+        unready_clusters+=("$cluster")
+        continue
+      fi
+      
+      echo "  ✅ Cluster $cluster is available and joined"
+    done
+    
+    if [[ "$all_ready" == "true" ]]; then
+      echo "✅ All required clusters are available and joined!"
+      return 0
+    else
+      echo "⏳ Waiting for clusters to be ready: ${unready_clusters[*]}"
+      echo "   This is normal during initial cluster deployment - clusters may take 10-30 minutes to become ready"
+      
+      if [[ $attempt -ge $CLUSTER_READINESS_MAX_ATTEMPTS ]]; then
+        echo "❌ TIMEOUT: Clusters are still not ready after $CLUSTER_READINESS_MAX_ATTEMPTS attempts ($((CLUSTER_READINESS_MAX_ATTEMPTS * CLUSTER_READINESS_SLEEP / 60)) minutes)"
+        echo "   Unready clusters: ${unready_clusters[*]}"
+        echo "   This may indicate a problem with cluster deployment"
+        echo "   The precheck will continue but certificate extraction may fail"
+        return 1
+      else
+        sleep $CLUSTER_READINESS_SLEEP
+        ((attempt++))
+      fi
+    fi
+  done
+  
+  return 1
 }
 
 # Function to check certificate distribution
@@ -577,7 +646,16 @@ EOF
 # Main execution with retry logic
 main_execution() {
   echo "🔍 Starting certificate distribution check with retry logic..."
-
+  
+  # First, wait for required clusters to be ready
+  echo "⏳ Waiting for required clusters to be available and joined before proceeding..."
+  if wait_for_cluster_readiness; then
+    echo "✅ All required clusters are ready - proceeding with certificate checks"
+  else
+    echo "⚠️  Some clusters are not ready yet, but continuing anyway..."
+    echo "   The certificate extraction will be attempted when clusters become ready"
+  fi
+  
   attempt=1
   while [[ $attempt -le $MAX_ATTEMPTS ]]; do
     echo "=== Certificate Distribution Attempt $attempt/$MAX_ATTEMPTS ==="
