@@ -385,16 +385,56 @@ spec:
           
           # Check if ramen-hub-operator-config exists
           if oc get configmap ramen-hub-operator-config -n openshift-operators &>/dev/null; then
-            echo "  ConfigMap exists, patching with base64-encoded CA bundle..."
+            echo "  ConfigMap exists, updating ramen_manager_config.yaml with caCertificates..."
+            
+            # Get existing ramen_manager_config.yaml content
+            EXISTING_YAML=$(oc get configmap ramen-hub-operator-config -n openshift-operators -o jsonpath='{.data.ramen_manager_config\.yaml}' 2>/dev/null || echo "")
+            
+            # Create updated YAML with caCertificates
+            if [[ -n "$EXISTING_YAML" ]]; then
+              # Use yq to merge caCertificates into existing YAML, or use a simple approach
+              # Create a temporary YAML file with the update
+              echo "$EXISTING_YAML" > "$WORK_DIR/existing-ramen-config.yaml"
+              
+              # Add or update caCertificates in the YAML
+              # Check if caCertificates already exists
+              if grep -q "^caCertificates:" "$WORK_DIR/existing-ramen-config.yaml"; then
+                # Update existing caCertificates
+                if command -v yq &>/dev/null; then
+                  yq eval ".caCertificates = \"$CA_BUNDLE_BASE64\"" -i "$WORK_DIR/existing-ramen-config.yaml"
+                else
+                  # Fallback: use sed to update the line
+                  sed -i "s/^caCertificates:.*/caCertificates: $CA_BUNDLE_BASE64/" "$WORK_DIR/existing-ramen-config.yaml"
+                fi
+              else
+                # Add new caCertificates at the end
+                echo "caCertificates: $CA_BUNDLE_BASE64" >> "$WORK_DIR/existing-ramen-config.yaml"
+              fi
+              
+              UPDATED_YAML=$(cat "$WORK_DIR/existing-ramen-config.yaml")
+            else
+              # No existing YAML, create new one with just caCertificates
+              UPDATED_YAML="caCertificates: $CA_BUNDLE_BASE64"
+            fi
+            
+            # Create patch file for ConfigMap update
+            echo "data:" > "$WORK_DIR/ramen-patch.yaml"
+            echo "  ramen_manager_config.yaml: |" >> "$WORK_DIR/ramen-patch.yaml"
+            echo "$UPDATED_YAML" | sed 's/^/    /' >> "$WORK_DIR/ramen-patch.yaml"
+            
+            # Patch the ConfigMap with updated YAML
             oc patch configmap ramen-hub-operator-config -n openshift-operators \
               --type=merge \
-              --patch="{\"data\":{\"caCertificates\":\"$CA_BUNDLE_BASE64\"}}" || {
+              --patch-file="$WORK_DIR/ramen-patch.yaml" || {
               echo "  Warning: Could not patch ramen-hub-operator-config"
             }
+            
+            rm -f "$WORK_DIR/ramen-patch.yaml"
+            
           else
-            echo "  ConfigMap does not exist, creating with base64-encoded CA bundle..."
+            echo "  ConfigMap does not exist, creating with ramen_manager_config.yaml containing caCertificates..."
             oc create configmap ramen-hub-operator-config -n openshift-operators \
-              --from-literal=caCertificates="$CA_BUNDLE_BASE64" || {
+              --from-literal=ramen_manager_config.yaml="caCertificates: $CA_BUNDLE_BASE64" || {
               echo "  Warning: Could not create ramen-hub-operator-config"
             }
           fi
