@@ -18,12 +18,6 @@ post-install: ## Post-install tasks - load-secrets
 	make load-secrets
 	echo "Post-deploy complete"
 
-deploy-kubevirt-worker: ## Deploy the metal node worker (from workstation). This is normally done in-cluster
-	./scripts/deploy_kubevirt_worker.sh
-
-configure-controller: ## Configure AAP operator (from workstation). This is normally done in-cluster
-	ansible-playbook ./scripts/ansible_load_controller.sh -e "aeg_project_repo=$(TARGET_REPO) aeg_project_branch=$(TARGET_BRANCH)"
-
 test: ## Run tests
 	@set -e; for i in $(CHARTS); do echo "$${i}"; helm template "$${i}"; done
 	echo Tests SUCCESSFUL
