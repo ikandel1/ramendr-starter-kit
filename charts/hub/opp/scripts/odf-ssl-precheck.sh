@@ -734,6 +734,91 @@ spec:
           
           echo "  ✅ Completed ramen-dr-cluster-operator-config updates on managed clusters"
           
+          # Restart Velero pods on managed clusters to pick up new CA certificates
+          echo "7d. Restarting Velero pods on managed clusters..."
+          
+          for cluster in $MANAGED_CLUSTERS; do
+            if [[ "$cluster" == "local-cluster" ]]; then
+              continue
+            fi
+            
+            echo "  Processing cluster: $cluster"
+            
+            # Get kubeconfig for the cluster (reuse if already fetched)
+            KUBECONFIG_FILE="/tmp/${cluster}-kubeconfig.yaml"
+            
+            if [[ -f "$KUBECONFIG_FILE" ]]; then
+              # Find Velero pods in openshift-adp namespace
+              VELERO_PODS=$(oc --kubeconfig="$KUBECONFIG_FILE" get pods -n openshift-adp -l component=velero -o jsonpath='{.items[*].metadata.name}' 2>/dev/null || echo "")
+              
+              if [[ -n "$VELERO_PODS" ]]; then
+                echo "    Found Velero pods: $VELERO_PODS"
+                
+                for pod in $VELERO_PODS; do
+                  echo "    Deleting pod $pod to trigger restart..."
+                  oc --kubeconfig="$KUBECONFIG_FILE" delete pod "$pod" -n openshift-adp --ignore-not-found=true || {
+                    echo "    Warning: Could not delete pod $pod"
+                  }
+                done
+                
+                # Wait for pods to be deleted
+                echo "    Waiting for pods to be terminated..."
+                for pod in $VELERO_PODS; do
+                  oc --kubeconfig="$KUBECONFIG_FILE" wait --for=delete pod/"$pod" -n openshift-adp --timeout=60s 2>/dev/null || true
+                done
+                
+                # Wait for new pods to be running
+                echo "    Waiting for new Velero pods to be running..."
+                MAX_WAIT_ATTEMPTS=30
+                WAIT_INTERVAL=10
+                attempt=0
+                
+                while [[ $attempt -lt $MAX_WAIT_ATTEMPTS ]]; do
+                  attempt=$((attempt + 1))
+                  
+                  NEW_PODS=$(oc --kubeconfig="$KUBECONFIG_FILE" get pods -n openshift-adp -l component=velero -o jsonpath='{.items[*].metadata.name}' 2>/dev/null || echo "")
+                  ALL_RUNNING=true
+                  
+                  if [[ -n "$NEW_PODS" ]]; then
+                    for pod in $NEW_PODS; do
+                      POD_STATUS=$(oc --kubeconfig="$KUBECONFIG_FILE" get pod "$pod" -n openshift-adp -o jsonpath='{.status.phase}' 2>/dev/null || echo "Unknown")
+                      
+                      if [[ "$POD_STATUS" != "Running" ]]; then
+                        ALL_RUNNING=false
+                        break
+                      fi
+                    done
+                    
+                    if [[ "$ALL_RUNNING" == "true" ]]; then
+                      echo "    ✅ All Velero pods are running on $cluster: $NEW_PODS"
+                      break
+                    else
+                      echo "    ⏳ Waiting for pods to be running (attempt $attempt/$MAX_WAIT_ATTEMPTS)"
+                    fi
+                  else
+                    echo "    ⏳ Waiting for pods to appear (attempt $attempt/$MAX_WAIT_ATTEMPTS)"
+                  fi
+                  
+                  if [[ $attempt -lt $MAX_WAIT_ATTEMPTS ]]; then
+                    sleep $WAIT_INTERVAL
+                  fi
+                done
+                
+                if [[ $attempt -ge $MAX_WAIT_ATTEMPTS ]]; then
+                  echo "    ⚠️  Warning: Velero pods did not become ready within expected time on $cluster"
+                  echo "     The pods may still be starting - new CA certificates will be applied when ready"
+                fi
+              else
+                echo "    ⚠️  Warning: Velero pods not found on $cluster - they may not be deployed yet"
+                echo "     New CA certificates will be applied when the pods start"
+              fi
+            else
+              echo "    ❌ Could not get kubeconfig for $cluster - skipping Velero pod restart"
+            fi
+          done
+          
+          echo "  ✅ Completed Velero pod restarts on managed clusters"
+          
           echo "8. Distributing certificate data to managed clusters..."
           DISTRIBUTION_ATTEMPTS=3
           DISTRIBUTION_SLEEP=10
@@ -869,6 +954,7 @@ spec:
           echo "   - Managed clusters: ramenddr-cluster-operator pods restarted"
           echo "   - ramen-hub-operator-config: Updated with base64-encoded CA bundle (hub cluster)"
           echo "   - ramen-dr-cluster-operator-config: Updated with base64-encoded CA bundle (managed clusters)"
+          echo "   - Managed clusters: Velero pods restarted (openshift-adp namespace)"
           echo "   - Managed clusters: Certificate data distributed (includes ingress CAs)"
           echo ""
           echo "This follows Red Hat ODF Disaster Recovery certificate management guidelines"
