@@ -1,0 +1,11 @@
+---
+apiVersion: v2
+name: data-protection-application
+description: This application configures OADP/Velero for regional DR
+version: 0.0.1
+keywords:
+  - acm
+  - odf
+  - openshift
+  - regional dr
+  - disaster recovery

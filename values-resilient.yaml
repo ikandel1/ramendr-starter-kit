@@ -121,5 +121,11 @@ clusterGroup:
       project: resilient
       chart: external-dns-operator
       chartVersion: 0.1.*
+    
+    adp-data-protection:
+      name: adp-data-protection-application
+      namespace: openshift-adp
+      project: resilient
+      chart: charts/resilient/data-protection-application
 
   managedClusterGroups: []
