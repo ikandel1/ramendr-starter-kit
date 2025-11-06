@@ -458,9 +458,22 @@ if oc get configmap ramen-hub-operator-config -n openshift-operators &>/dev/null
     echo "  Existing YAML content (first 20 lines):"
     echo "$EXISTING_YAML" | head -n 20
     
-    # Use Python to update caCertificates in each s3StoreProfiles item
-    # Write Python script to file to avoid quoting issues
-    cat > "$WORK_DIR/update_ramen_config.py" <<PYTHON_SCRIPT
+    # Try to install PyYAML first, or use alternative methods
+    echo "  Attempting to update s3StoreProfiles with caCertificates..."
+    
+    # Method 1: Try yq first (most reliable if available)
+    if command -v yq &>/dev/null; then
+      echo "  Using yq to update s3StoreProfiles..."
+      if yq eval ".s3StoreProfiles[]?.caCertificates = \"$CA_BUNDLE_BASE64\"" -i "$WORK_DIR/existing-ramen-config.yaml" 2>&1; then
+        echo "  ✅ Successfully updated s3StoreProfiles with caCertificates using yq"
+      else
+        echo "  ⚠️  yq failed, trying alternative method..."
+        # Try installing PyYAML
+        if python3 -m pip install --user PyYAML 2>&1 | grep -q "Successfully installed\|Requirement already satisfied"; then
+          echo "  ✅ PyYAML installed, using Python..."
+          # Use Python with yaml module
+          export CA_BUNDLE_BASE64
+          python3 -c "
 import yaml
 import sys
 import os
@@ -474,51 +487,196 @@ try:
     if config is None:
         config = {}
     
-    # Ensure s3StoreProfiles exists
     if 's3StoreProfiles' not in config:
         config['s3StoreProfiles'] = []
     
-    # Update caCertificates for each profile
     updated_count = 0
     for profile in config.get('s3StoreProfiles', []):
         if isinstance(profile, dict):
             profile['caCertificates'] = ca_bundle
             updated_count += 1
     
-    print(f"  Updated {updated_count} s3StoreProfiles with caCertificates", file=sys.stderr)
+    print(f'  Updated {updated_count} s3StoreProfiles with caCertificates', file=sys.stderr)
     
-    # Write updated config
     with open('$WORK_DIR/existing-ramen-config.yaml', 'w') as f:
         yaml.dump(config, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
     
-    print("SUCCESS", file=sys.stderr)
+    print('SUCCESS', file=sys.stderr)
 except Exception as e:
-    print(f"ERROR: {e}", file=sys.stderr)
+    print(f'ERROR: {e}', file=sys.stderr)
     sys.exit(1)
-PYTHON_SCRIPT
-    
-    # Run Python script with CA_BUNDLE_BASE64 as environment variable
-    export CA_BUNDLE_BASE64
-    PYTHON_OUTPUT=$(python3 "$WORK_DIR/update_ramen_config.py" 2>&1)
-    PYTHON_EXIT_CODE=$?
-    
-    if [[ $PYTHON_EXIT_CODE -eq 0 ]]; then
-      echo "$PYTHON_OUTPUT"
-      echo "  ✅ Successfully updated s3StoreProfiles with caCertificates"
+" 2>&1 || {
+            echo "  ⚠️  Python with yaml module also failed, using sed-based approach..."
+            # Fallback: Use sed/awk to update or add caCertificates
+            # First, try to update existing caCertificates, then add if missing
+            awk -v ca_bundle="$CA_BUNDLE_BASE64" '
+              /^  - name:/ { 
+                in_profile=1
+                print
+                next
+              }
+              in_profile && /^    caCertificates:/ {
+                print "    caCertificates: \"" ca_bundle "\""
+                in_profile=0
+                next
+              }
+              in_profile && /^    [a-zA-Z]/ && !/^    caCertificates:/ {
+                print "    caCertificates: \"" ca_bundle "\""
+                print
+                in_profile=0
+                next
+              }
+              in_profile && /^  -/ {
+                print "    caCertificates: \"" ca_bundle "\""
+                in_profile=0
+                print
+                next
+              }
+              { print }
+            ' "$WORK_DIR/existing-ramen-config.yaml" > "$WORK_DIR/existing-ramen-config.yaml.tmp" && \
+            mv "$WORK_DIR/existing-ramen-config.yaml.tmp" "$WORK_DIR/existing-ramen-config.yaml" || {
+              echo "  ❌ sed/awk-based approach failed"
+            }
+          }
+        else
+          echo "  ⚠️  Could not install PyYAML, using sed-based approach..."
+          # Use awk to update or add caCertificates
+          awk -v ca_bundle="$CA_BUNDLE_BASE64" '
+            /^  - name:/ { 
+              in_profile=1
+              print
+              next
+            }
+            in_profile && /^    caCertificates:/ {
+              print "    caCertificates: \"" ca_bundle "\""
+              in_profile=0
+              next
+            }
+            in_profile && /^    [a-zA-Z]/ && !/^    caCertificates:/ {
+              print "    caCertificates: \"" ca_bundle "\""
+              print
+              in_profile=0
+              next
+            }
+            in_profile && /^  -/ {
+              print "    caCertificates: \"" ca_bundle "\""
+              in_profile=0
+              print
+              next
+            }
+            { print }
+          ' "$WORK_DIR/existing-ramen-config.yaml" > "$WORK_DIR/existing-ramen-config.yaml.tmp" && \
+          mv "$WORK_DIR/existing-ramen-config.yaml.tmp" "$WORK_DIR/existing-ramen-config.yaml" || {
+            echo "  ❌ sed-based approach also failed"
+          }
+        fi
+      fi
     else
-      echo "  ⚠️  Warning: Python script failed:"
-      echo "$PYTHON_OUTPUT"
-      echo "  Trying yq as fallback..."
-      # Fallback to yq if available
-      if command -v yq &>/dev/null; then
-        yq eval ".s3StoreProfiles[]?.caCertificates = \"$CA_BUNDLE_BASE64\"" -i "$WORK_DIR/existing-ramen-config.yaml" 2>&1 || {
-          echo "  ⚠️  Warning: yq also failed"
+      # No yq available, try to install PyYAML
+      echo "  yq not available, trying to install PyYAML..."
+      if python3 -m pip install --user PyYAML 2>&1 | grep -q "Successfully installed\|Requirement already satisfied"; then
+        echo "  ✅ PyYAML installed, using Python..."
+        export CA_BUNDLE_BASE64
+        python3 -c "
+import yaml
+import sys
+import os
+
+ca_bundle = os.environ.get('CA_BUNDLE_BASE64', '')
+
+try:
+    with open('$WORK_DIR/existing-ramen-config.yaml', 'r') as f:
+        config = yaml.safe_load(f) or {}
+    
+    if config is None:
+        config = {}
+    
+    if 's3StoreProfiles' not in config:
+        config['s3StoreProfiles'] = []
+    
+    updated_count = 0
+    for profile in config.get('s3StoreProfiles', []):
+        if isinstance(profile, dict):
+            profile['caCertificates'] = ca_bundle
+            updated_count += 1
+    
+    print(f'  Updated {updated_count} s3StoreProfiles with caCertificates', file=sys.stderr)
+    
+    with open('$WORK_DIR/existing-ramen-config.yaml', 'w') as f:
+        yaml.dump(config, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
+    
+    print('SUCCESS', file=sys.stderr)
+except Exception as e:
+    print(f'ERROR: {e}', file=sys.stderr)
+    sys.exit(1)
+" 2>&1 || {
+          echo "  ⚠️  Python with yaml module failed, using sed-based approach..."
+          # Fallback: Use awk to update or add caCertificates
+          awk -v ca_bundle="$CA_BUNDLE_BASE64" '
+            /^  - name:/ { 
+              in_profile=1
+              print
+              next
+            }
+            in_profile && /^    caCertificates:/ {
+              print "    caCertificates: \"" ca_bundle "\""
+              in_profile=0
+              next
+            }
+            in_profile && /^    [a-zA-Z]/ && !/^    caCertificates:/ {
+              print "    caCertificates: \"" ca_bundle "\""
+              print
+              in_profile=0
+              next
+            }
+            in_profile && /^  -/ {
+              print "    caCertificates: \"" ca_bundle "\""
+              in_profile=0
+              print
+              next
+            }
+            { print }
+          ' "$WORK_DIR/existing-ramen-config.yaml" > "$WORK_DIR/existing-ramen-config.yaml.tmp" && \
+          mv "$WORK_DIR/existing-ramen-config.yaml.tmp" "$WORK_DIR/existing-ramen-config.yaml" || {
+            echo "  ❌ All methods failed"
+          }
         }
       else
-        echo "  ❌ Error: Could not update s3StoreProfiles - Python and yq both failed"
-        echo "  Manual intervention required"
+        echo "  ⚠️  Could not install PyYAML, using sed-based approach..."
+        # Use awk as last resort to update or add caCertificates
+        awk -v ca_bundle="$CA_BUNDLE_BASE64" '
+          /^  - name:/ { 
+            in_profile=1
+            print
+            next
+          }
+          in_profile && /^    caCertificates:/ {
+            print "    caCertificates: \"" ca_bundle "\""
+            in_profile=0
+            next
+          }
+          in_profile && /^    [a-zA-Z]/ && !/^    caCertificates:/ {
+            print "    caCertificates: \"" ca_bundle "\""
+            print
+            in_profile=0
+            next
+          }
+          in_profile && /^  -/ {
+            print "    caCertificates: \"" ca_bundle "\""
+            in_profile=0
+            print
+            next
+          }
+          { print }
+        ' "$WORK_DIR/existing-ramen-config.yaml" > "$WORK_DIR/existing-ramen-config.yaml.tmp" && \
+        mv "$WORK_DIR/existing-ramen-config.yaml.tmp" "$WORK_DIR/existing-ramen-config.yaml" || {
+          echo "  ❌ sed-based approach failed"
+        }
       fi
     fi
+    
+    # Clean up temporary files
+    rm -f "$WORK_DIR/existing-ramen-config.yaml.bak" "$WORK_DIR/existing-ramen-config.yaml.tmp"
     
     # Verify the update
     if [[ -f "$WORK_DIR/existing-ramen-config.yaml" ]]; then
