@@ -351,12 +351,39 @@ else
   # Apply the helm template with namespace override to gitops-vms
   echo "  Applying helm template to namespace: $VM_NAMESPACE"
   # Render the template and ensure all resources have the correct namespace
-  helm template edge-gitops-vms "$HELM_CHART_URL" $VALUES_ARG --set namespace="$VM_NAMESPACE" > "$WORK_DIR/helm-template-to-apply.yaml" 2>&1
+  echo "  Rendering helm template..."
+  if ! helm template edge-gitops-vms "$HELM_CHART_URL" $VALUES_ARG --set namespace="$VM_NAMESPACE" > "$WORK_DIR/helm-template-to-apply.yaml" 2>&1; then
+    echo "  ❌ Error: Failed to render helm template"
+    echo "  Helm template output:"
+    cat "$WORK_DIR/helm-template-to-apply.yaml" 2>/dev/null || echo "  (no output captured)"
+    exit 1
+  fi
+  
+  # Check if the template output is valid (not empty and contains YAML)
+  if [[ ! -s "$WORK_DIR/helm-template-to-apply.yaml" ]]; then
+    echo "  ❌ Error: Helm template output is empty"
+    exit 1
+  fi
+  
+  # Check if the output contains error messages instead of YAML
+  if grep -qi "error\|failed\|not found" "$WORK_DIR/helm-template-to-apply.yaml" 2>/dev/null; then
+    if ! grep -q "^apiVersion:" "$WORK_DIR/helm-template-to-apply.yaml" 2>/dev/null; then
+      echo "  ❌ Error: Helm template output contains errors:"
+      cat "$WORK_DIR/helm-template-to-apply.yaml"
+      exit 1
+    fi
+  fi
+  
+  echo "  ✅ Helm template rendered successfully"
   
   # Ensure all resources (VMs, Services, Routes) have the gitops-vms namespace set
+  echo "  Ensuring all resources have namespace $VM_NAMESPACE set..."
   if command -v yq &>/dev/null; then
     # Use yq to ensure namespace is set to gitops-vms on all resources
-    yq eval 'select(.kind == "VirtualMachine" or .kind == "Service" or .kind == "Route") | .metadata.namespace = "'"$VM_NAMESPACE"'"' -i "$WORK_DIR/helm-template-to-apply.yaml" 2>/dev/null || true
+    if ! yq eval 'select(.kind == "VirtualMachine" or .kind == "Service" or .kind == "Route") | .metadata.namespace = "'"$VM_NAMESPACE"'"' -i "$WORK_DIR/helm-template-to-apply.yaml" 2>/dev/null; then
+      echo "  ⚠️  Warning: Failed to update namespaces with yq, trying sed fallback"
+      sed -i "s/^  namespace:.*$/  namespace: $VM_NAMESPACE/g" "$WORK_DIR/helm-template-to-apply.yaml" 2>/dev/null || true
+    fi
   else
     # Fallback: use sed to add/update namespace for all resources
     # Add namespace after metadata if missing, or update existing namespace
@@ -364,8 +391,13 @@ else
     sed -i "s/^  namespace:.*$/  namespace: $VM_NAMESPACE/g" "$WORK_DIR/helm-template-to-apply.yaml" 2>/dev/null || true
   fi
   
-  if oc apply -n "$VM_NAMESPACE" -f "$WORK_DIR/helm-template-to-apply.yaml" 2>&1; then
+  echo "  Applying resources to namespace $VM_NAMESPACE..."
+  APPLY_OUTPUT=$(oc apply -n "$VM_NAMESPACE" -f "$WORK_DIR/helm-template-to-apply.yaml" 2>&1)
+  APPLY_EXIT_CODE=$?
+  
+  if [[ $APPLY_EXIT_CODE -eq 0 ]]; then
     echo "  ✅ Helm template applied successfully to namespace $VM_NAMESPACE"
+    echo "$APPLY_OUTPUT" | head -20  # Show first 20 lines of output
     
     # Verify resources were created
     echo ""
@@ -400,6 +432,15 @@ else
     fi
   else
     echo "  ❌ Error: Failed to apply helm template"
+    echo "  Exit code: $APPLY_EXIT_CODE"
+    echo "  Error output:"
+    echo "$APPLY_OUTPUT"
+    echo ""
+    echo "  Debugging information:"
+    echo "  - Namespace $VM_NAMESPACE exists: $(oc get namespace "$VM_NAMESPACE" &>/dev/null && echo "yes" || echo "no")"
+    echo "  - Template file size: $(wc -c < "$WORK_DIR/helm-template-to-apply.yaml" 2>/dev/null || echo "0") bytes"
+    echo "  - Template file first 50 lines:"
+    head -50 "$WORK_DIR/helm-template-to-apply.yaml" 2>/dev/null || echo "  (file not readable)"
     exit 1
   fi
 fi
