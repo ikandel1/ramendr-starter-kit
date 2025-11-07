@@ -1,0 +1,41 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: edge-gitops-vms-deploy
+  namespace: open-cluster-management
+  labels:
+    app.kubernetes.io/name: edge-gitops-vms
+    app.kubernetes.io/component: deployment
+  annotations:
+    argocd.argoproj.io/sync-wave: "9"
+    argocd.argoproj.io/sync-options: Prune=false
+    argocd.argoproj.io/compare-options: IgnoreExtraneous
+    argocd.argoproj.io/hook: "PostSync"
+spec:
+  backoffLimit: 3
+  activeDeadlineSeconds: 1800
+  ttlSecondsAfterFinished: 300
+  template:
+    spec:
+      serviceAccountName: edge-gitops-vms-deploy-sa
+      restartPolicy: Never
+      containers:
+      - name: edge-gitops-vms-deploy
+        image: registry.redhat.io/openshift4/ose-cli:latest
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "200m"
+        command:
+        - /bin/bash
+        - -c
+        - |
+{{ .Files.Get "scripts/edge-gitops-vms-deploy.sh" | indent 10 }}
+        env:
+        - name: KUBECONFIG
+          value: ""
+      restartPolicy: Never
+
