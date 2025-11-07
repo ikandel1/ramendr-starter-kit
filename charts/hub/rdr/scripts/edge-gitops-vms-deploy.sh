@@ -434,18 +434,51 @@ else
     echo "  This may apply to the wrong cluster!"
   fi
   
-  # Now apply the template and capture the output and exit code
+  # Now apply the template and capture both stdout, stderr, and exit code
   # The oc apply will use the KUBECONFIG set earlier (target cluster's kubeconfig)
-  APPLY_OUTPUT=$(oc apply -n "$VM_NAMESPACE" -f "$TEMPLATE_OUTPUT_FILE" 2>&1)
+  # Use temporary files to capture stdout and stderr separately for better debugging
+  APPLY_STDOUT_FILE="$WORK_DIR/oc-apply-stdout.log"
+  APPLY_STDERR_FILE="$WORK_DIR/oc-apply-stderr.log"
+  
+  echo "  Executing: oc apply -n $VM_NAMESPACE -f $TEMPLATE_OUTPUT_FILE"
+  
+  # Capture stdout and stderr separately, then capture exit code
+  oc apply -n "$VM_NAMESPACE" -f "$TEMPLATE_OUTPUT_FILE" >"$APPLY_STDOUT_FILE" 2>"$APPLY_STDERR_FILE"
   APPLY_EXIT_CODE=$?
+  
+  # Read stdout and stderr from files
+  APPLY_STDOUT=$(cat "$APPLY_STDOUT_FILE" 2>/dev/null || echo "")
+  APPLY_STDERR=$(cat "$APPLY_STDERR_FILE" 2>/dev/null || echo "")
+  
+  # Combine stdout and stderr for full output
+  APPLY_OUTPUT=""
+  if [[ -n "$APPLY_STDOUT" ]]; then
+    APPLY_OUTPUT="STDOUT:
+${APPLY_STDOUT}"
+  fi
+  if [[ -n "$APPLY_STDERR" ]]; then
+    if [[ -n "$APPLY_OUTPUT" ]]; then
+      APPLY_OUTPUT="${APPLY_OUTPUT}
+
+STDERR:
+${APPLY_STDERR}"
+    else
+      APPLY_OUTPUT="STDERR:
+${APPLY_STDERR}"
+    fi
+  fi
+  
+  echo "  oc apply exit code: $APPLY_EXIT_CODE"
   
   if [[ $APPLY_EXIT_CODE -eq 0 ]]; then
     echo "  ✅ Helm template applied successfully to namespace $VM_NAMESPACE"
     echo ""
-    echo "  Apply output:"
-    echo "$APPLY_OUTPUT" | head -30 | sed 's/^/    /'
-    if [[ $(echo "$APPLY_OUTPUT" | wc -l) -gt 30 ]]; then
-      echo "    ... (output truncated, showing first 30 lines)"
+    if [[ -n "$APPLY_OUTPUT" ]]; then
+      echo "  Apply output:"
+      echo "$APPLY_OUTPUT" | head -30 | sed 's/^/    /'
+      if [[ $(echo "$APPLY_OUTPUT" | wc -l) -gt 30 ]]; then
+        echo "    ... (output truncated, showing first 30 lines)"
+      fi
     fi
     
     # Verify resources were created
@@ -487,10 +520,26 @@ else
     echo "  ========================================"
     echo "  Exit code: $APPLY_EXIT_CODE"
     echo ""
-    echo "  Full error output:"
-    echo "  ----------------------------------------"
-    echo "$APPLY_OUTPUT" | sed 's/^/  /'
-    echo "  ----------------------------------------"
+    if [[ -n "$APPLY_OUTPUT" ]]; then
+      echo "  Full output (stdout + stderr):"
+      echo "  ----------------------------------------"
+      echo "$APPLY_OUTPUT" | sed 's/^/  /'
+      echo "  ----------------------------------------"
+    fi
+    if [[ -n "$APPLY_STDOUT" ]]; then
+      echo ""
+      echo "  Standard output:"
+      echo "  ----------------------------------------"
+      echo "$APPLY_STDOUT" | sed 's/^/  /'
+      echo "  ----------------------------------------"
+    fi
+    if [[ -n "$APPLY_STDERR" ]]; then
+      echo ""
+      echo "  Standard error output:"
+      echo "  ----------------------------------------"
+      echo "$APPLY_STDERR" | sed 's/^/  /'
+      echo "  ----------------------------------------"
+    fi
     echo ""
     echo "  ========================================"
     echo "  DEBUGGING INFORMATION"
