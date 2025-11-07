@@ -364,20 +364,64 @@ else
   echo "  Applying helm template to namespace: $VM_NAMESPACE"
   echo "  Rendering and applying helm template..."
   
-  # First, render the helm template and save it to a file
-  echo "  Rendering helm template..."
-  if ! helm template edge-gitops-vms "$HELM_CHART_URL" $VALUES_ARG --set namespace="$VM_NAMESPACE" > "$WORK_DIR/helm-template-applied.yaml" 2>&1; then
+  # First, render the helm template and save it to /tmp
+  TEMPLATE_OUTPUT_FILE="/tmp/edge-gitops-vms-template.yaml"
+  echo "  Rendering helm template to: $TEMPLATE_OUTPUT_FILE"
+  
+  if ! helm template edge-gitops-vms "$HELM_CHART_URL" $VALUES_ARG --set namespace="$VM_NAMESPACE" > "$TEMPLATE_OUTPUT_FILE" 2>&1; then
     echo "  ❌ Error: Failed to render helm template"
     echo "  Helm template output:"
-    cat "$WORK_DIR/helm-template-applied.yaml" 2>/dev/null || echo "  (no output captured)"
+    cat "$TEMPLATE_OUTPUT_FILE" 2>/dev/null || echo "  (no output captured)"
     exit 1
   fi
   
-  echo "  ✅ Helm template output saved to: $WORK_DIR/helm-template-applied.yaml"
+  # Check if template output is valid
+  if [[ ! -s "$TEMPLATE_OUTPUT_FILE" ]]; then
+    echo "  ❌ Error: Helm template output is empty"
+    exit 1
+  fi
+  
+  # Report what got rendered
+  echo "  ✅ Helm template rendered successfully"
+  echo "  Template file: $TEMPLATE_OUTPUT_FILE"
+  echo "  Template file size: $(wc -c < "$TEMPLATE_OUTPUT_FILE" 2>/dev/null || echo "0") bytes"
+  echo ""
+  echo "  Resources rendered in template:"
+  
+  # Count and list resources
+  RESOURCE_COUNT=$(grep -c "^kind:" "$TEMPLATE_OUTPUT_FILE" 2>/dev/null || echo "0")
+  echo "    Total resources: $RESOURCE_COUNT"
+  
+  # List resource kinds
+  echo "    Resource kinds found:"
+  grep "^kind:" "$TEMPLATE_OUTPUT_FILE" 2>/dev/null | sort | uniq -c | sed 's/^/      /' || echo "      (none found)"
+  
+  # List resources with names and namespaces
+  echo "    Resources with names:"
+  awk '
+    BEGIN { RS="---"; kind=""; name=""; namespace="" }
+    /^kind:/ { kind=$2 }
+    /^  name:/ && name=="" { name=$2 }
+    /^  namespace:/ { namespace=$2 }
+    /^---$/ || /^$/ {
+      if (kind != "" && name != "") {
+        printf "      %s/%s", kind, name
+        if (namespace != "") printf " (namespace: %s)", namespace
+        printf "\n"
+      }
+      kind=""; name=""; namespace=""
+    }
+  ' "$TEMPLATE_OUTPUT_FILE" 2>/dev/null | head -20 || echo "      (could not parse resources)"
+  
+  if [[ $RESOURCE_COUNT -gt 20 ]]; then
+    echo "    ... (showing first 20 resources, total: $RESOURCE_COUNT)"
+  fi
+  
+  echo ""
+  echo "  Applying template to namespace: $VM_NAMESPACE..."
   
   # Now apply the template and capture the output and exit code
-  echo "  Applying resources to namespace $VM_NAMESPACE..."
-  APPLY_OUTPUT=$(oc apply -n "$VM_NAMESPACE" -f "$WORK_DIR/helm-template-applied.yaml" 2>&1)
+  APPLY_OUTPUT=$(oc apply -n "$VM_NAMESPACE" -f "$TEMPLATE_OUTPUT_FILE" 2>&1)
   APPLY_EXIT_CODE=$?
   
   if [[ $APPLY_EXIT_CODE -eq 0 ]]; then
