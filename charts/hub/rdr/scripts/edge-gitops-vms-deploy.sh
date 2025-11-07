@@ -8,6 +8,7 @@ echo "This job will check for existing VMs, Services, and Routes before applying
 HELM_CHART_URL="https://github.com/validatedpatterns/helm-charts/releases/download/main/edge-gitops-vms-0.2.10.tgz"
 WORK_DIR="/tmp/edge-gitops-vms"
 VALUES_FILE="$WORK_DIR/values-egv-dr.yaml"
+VM_NAMESPACE="gitops-vms"
 DRPC_NAMESPACE="openshift-dr-ops"
 DRPC_NAME="gitops-vm-protection"
 PLACEMENT_NAME="gitops-vm-protection-placement-1"
@@ -116,6 +117,20 @@ fi
 CURRENT_CLUSTER=$(oc config view --minify -o jsonpath='{.contexts[0].context.cluster}' 2>/dev/null || echo "")
 echo "Current cluster context: $CURRENT_CLUSTER"
 echo "Target cluster for deployment: $TARGET_CLUSTER"
+
+# Ensure the gitops-vms namespace exists on the target cluster
+echo ""
+echo "Ensuring namespace $VM_NAMESPACE exists on target cluster..."
+if oc get namespace "$VM_NAMESPACE" &>/dev/null; then
+  echo "  ✅ Namespace $VM_NAMESPACE already exists"
+else
+  echo "  Creating namespace $VM_NAMESPACE..."
+  if oc create namespace "$VM_NAMESPACE" 2>&1; then
+    echo "  ✅ Namespace $VM_NAMESPACE created successfully"
+  else
+    echo "  ⚠️  Warning: Failed to create namespace $VM_NAMESPACE (may already exist or insufficient permissions)"
+  fi
+fi
 
 # Step 1: Check for helm and install if needed
 echo ""
@@ -279,20 +294,26 @@ if [[ -s "$WORK_DIR/helm-output.yaml" ]]; then
     }
   ' "$WORK_DIR/helm-output.yaml" > "$WORK_DIR/resources-list.txt"
   
-  # Check each resource
+  # Check each resource in the gitops-vms namespace
   while IFS='|' read -r kind name namespace; do
     if [[ -z "$kind" || -z "$name" ]]; then
       continue
     fi
     
-    echo "  Checking $kind/$name in namespace: ${namespace:-<default>}"
+    # Use gitops-vms namespace if namespace is not specified or is empty
+    local check_namespace="${namespace:-$VM_NAMESPACE}"
+    if [[ "$check_namespace" == "null" ]]; then
+      check_namespace="$VM_NAMESPACE"
+    fi
     
-    if check_resource_exists "" "$kind" "$namespace" "$name"; then
-      echo "    ✅ $kind/$name exists"
+    echo "  Checking $kind/$name in namespace: $check_namespace"
+    
+    if check_resource_exists "" "$kind" "$check_namespace" "$name"; then
+      echo "    ✅ $kind/$name exists in namespace $check_namespace"
     else
-      echo "    ❌ $kind/$name does not exist"
+      echo "    ❌ $kind/$name does not exist in namespace $check_namespace"
       ALL_EXIST=false
-      MISSING_RESOURCES+=("$kind/$name in namespace ${namespace:-<default>}")
+      MISSING_RESOURCES+=("$kind/$name in namespace $check_namespace")
     fi
   done < "$WORK_DIR/resources-list.txt"
   
@@ -325,9 +346,22 @@ else
     done
   fi
   
-  # Apply the helm template
-  if helm template edge-gitops-vms "$HELM_CHART_URL" $VALUES_ARG | oc apply -f- 2>&1; then
-    echo "  ✅ Helm template applied successfully"
+  # Apply the helm template with namespace override to gitops-vms
+  echo "  Applying helm template to namespace: $VM_NAMESPACE"
+  # Render the template and ensure all resources have the correct namespace
+  helm template edge-gitops-vms "$HELM_CHART_URL" $VALUES_ARG --set namespace="$VM_NAMESPACE" > "$WORK_DIR/helm-template-to-apply.yaml" 2>&1
+  
+  # Ensure all resources have the namespace set (patch if missing)
+  if command -v yq &>/dev/null; then
+    # Use yq to ensure namespace is set on all resources
+    yq eval 'select(.metadata.namespace == null or .metadata.namespace == "") | .metadata.namespace = "'"$VM_NAMESPACE"'"' -i "$WORK_DIR/helm-template-to-apply.yaml" 2>/dev/null || true
+  else
+    # Fallback: use sed to add namespace if missing (basic approach)
+    sed -i "s/^  namespace:.*$/  namespace: $VM_NAMESPACE/g" "$WORK_DIR/helm-template-to-apply.yaml" 2>/dev/null || true
+  fi
+  
+  if oc apply -n "$VM_NAMESPACE" -f "$WORK_DIR/helm-template-to-apply.yaml" 2>&1; then
+    echo "  ✅ Helm template applied successfully to namespace $VM_NAMESPACE"
     
     # Verify resources were created
     echo ""
@@ -337,11 +371,17 @@ else
     if [[ -s "$WORK_DIR/resources-list.txt" ]]; then
       while IFS='|' read -r kind name namespace; do
         if [[ -n "$kind" && -n "$name" ]]; then
+          # Use gitops-vms namespace if namespace is not specified or is empty
+          local check_namespace="${namespace:-$VM_NAMESPACE}"
+          if [[ "$check_namespace" == "null" ]]; then
+            check_namespace="$VM_NAMESPACE"
+          fi
+          
           sleep 1  # Give resources a moment to be created
-          if check_resource_exists "" "$kind" "$namespace" "$name"; then
-            echo "  ✅ Verified: $kind/$name exists"
+          if check_resource_exists "" "$kind" "$check_namespace" "$name"; then
+            echo "  ✅ Verified: $kind/$name exists in namespace $check_namespace"
           else
-            echo "  ⚠️  Warning: $kind/$name not found after apply (may still be creating)"
+            echo "  ⚠️  Warning: $kind/$name not found in namespace $check_namespace after apply (may still be creating)"
             VERIFY_SUCCESS=false
           fi
         fi
