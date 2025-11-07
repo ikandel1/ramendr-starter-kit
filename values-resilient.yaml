@@ -126,6 +126,6 @@ clusterGroup:
       name: adp-data-protection-application
       namespace: openshift-adp
       project: resilient
-      chart: charts/resilient/data-protection-application
+      path: charts/resilient/data-protection-application
 
   managedClusterGroups: []
