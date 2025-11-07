@@ -2,7 +2,7 @@
 set -euo pipefail
 
 echo "Starting Edge GitOps VMs deployment check and deployment..."
-echo "This job will check for existing VMs, Services, and Routes before applying the helm template"
+echo "This job will check for existing VMs, Services, Routes, and ExternalSecrets before applying the helm template"
 
 # Configuration
 HELM_CHART_URL="https://github.com/validatedpatterns/helm-charts/releases/download/main/edge-gitops-vms-0.2.10.tgz"
@@ -198,20 +198,20 @@ else
   fi
 fi
 
-# Step 3: Extract VMs, Services, and Routes from helm output
+# Step 3: Extract VMs, Services, Routes, and ExternalSecrets from helm output
 echo ""
-echo "Step 3: Extracting VMs, Services, and Routes from helm template..."
+echo "Step 3: Extracting VMs, Services, Routes, and ExternalSecrets from helm template..."
 
 # Extract resources using yq or awk
 if command -v yq &>/dev/null; then
   # Use yq to extract resources
-  yq eval 'select(.kind == "VirtualMachine" or .kind == "Service" or .kind == "Route")' \
+  yq eval 'select(.kind == "VirtualMachine" or .kind == "Service" or .kind == "Route" or .kind == "ExternalSecret")' \
     -d'*' "$WORK_DIR/helm-output.yaml" > "$WORK_DIR/resources-to-check.yaml" 2>/dev/null || true
 else
   # Use awk to extract resources
   awk '
     BEGIN { RS="---\n"; ORS="---\n" }
-    /^kind: (VirtualMachine|Service|Route)$/ || /^kind: VirtualMachine$/ || /^kind: Service$/ || /^kind: Route$/ {
+    /^kind: (VirtualMachine|Service|Route|ExternalSecret)$/ || /^kind: VirtualMachine$/ || /^kind: Service$/ || /^kind: Route$/ || /^kind: ExternalSecret$/ {
       print
       getline
       while (getline && !/^---$/) {
@@ -229,7 +229,7 @@ if [[ ! -s "$WORK_DIR/resources-to-check.yaml" ]]; then
       RS="---"
       resource=""
     }
-    /^kind: VirtualMachine$/ || /^kind: Service$/ || /^kind: Route$/ {
+    /^kind: VirtualMachine$/ || /^kind: Service$/ || /^kind: Route$/ || /^kind: ExternalSecret$/ {
       resource=$0
       getline
       while (getline && !/^---$/) {
@@ -246,20 +246,23 @@ fi
 VM_COUNT=$(grep -c "^kind: VirtualMachine" "$WORK_DIR/resources-to-check.yaml" 2>/dev/null | tr -d ' \n' || echo "0")
 SERVICE_COUNT=$(grep -c "^kind: Service" "$WORK_DIR/resources-to-check.yaml" 2>/dev/null | tr -d ' \n' || echo "0")
 ROUTE_COUNT=$(grep -c "^kind: Route" "$WORK_DIR/resources-to-check.yaml" 2>/dev/null | tr -d ' \n' || echo "0")
+EXTERNAL_SECRET_COUNT=$(grep -c "^kind: ExternalSecret" "$WORK_DIR/resources-to-check.yaml" 2>/dev/null | tr -d ' \n' || echo "0")
 
 # Ensure counts are numeric (handle empty results)
 VM_COUNT=${VM_COUNT:-0}
 SERVICE_COUNT=${SERVICE_COUNT:-0}
 ROUTE_COUNT=${ROUTE_COUNT:-0}
+EXTERNAL_SECRET_COUNT=${EXTERNAL_SECRET_COUNT:-0}
 
 echo "  Found resources in template:"
 echo "    - VirtualMachines: $VM_COUNT"
 echo "    - Services: $SERVICE_COUNT"
 echo "    - Routes: $ROUTE_COUNT"
+echo "    - ExternalSecrets: $EXTERNAL_SECRET_COUNT"
 
-if [[ $VM_COUNT -eq 0 && $SERVICE_COUNT -eq 0 && $ROUTE_COUNT -eq 0 ]]; then
-  echo "  ⚠️  Warning: No VMs, Services, or Routes found in helm template"
-  echo "  Will proceed with applying the template anyway"
+if [[ $VM_COUNT -eq 0 && $SERVICE_COUNT -eq 0 && $ROUTE_COUNT -eq 0 && $EXTERNAL_SECRET_COUNT -eq 0 ]]; then
+  echo "  ⚠️  Warning: No VMs, Services, Routes, or ExternalSecrets found in helm template"
+  echo "  Note: These resources are optional - will proceed with applying the template anyway"
 fi
 
 # Step 4: Check if resources already exist
@@ -279,7 +282,7 @@ if [[ -s "$WORK_DIR/helm-output.yaml" ]]; then
     }
     {
       resource=$0
-      if (resource ~ /^kind: (VirtualMachine|Service|Route)$/ || resource ~ /kind: VirtualMachine/ || resource ~ /kind: Service/ || resource ~ /kind: Route/) {
+      if (resource ~ /^kind: (VirtualMachine|Service|Route|ExternalSecret)$/ || resource ~ /kind: VirtualMachine/ || resource ~ /kind: Service/ || resource ~ /kind: Route/ || resource ~ /kind: ExternalSecret/) {
         # Extract kind, name, and namespace
         kind=""
         name=""
@@ -332,8 +335,8 @@ if [[ -s "$WORK_DIR/helm-output.yaml" ]]; then
   done < "$WORK_DIR/resources-list.txt"
   
   if [[ ! -s "$WORK_DIR/resources-list.txt" ]]; then
-    echo "  ⚠️  Warning: No VMs, Services, or Routes found in helm template"
-    echo "  Will proceed with applying the template"
+    echo "  ⚠️  Warning: No VMs, Services, Routes, or ExternalSecrets found in helm template"
+    echo "  Note: These resources are optional - will proceed with applying the template"
     ALL_EXIST=false
   fi
 else
@@ -346,7 +349,7 @@ fi
 echo ""
 if [[ "$ALL_EXIST" == "true" && ${#MISSING_RESOURCES[@]} -eq 0 ]]; then
   echo "Step 5: All resources already exist"
-  echo "  ✅ VMs, Services, and Routes are already deployed"
+  echo "  ✅ VMs, Services, Routes, and ExternalSecrets are already deployed"
   echo "  Exiting successfully without applying template"
   exit 0
 else
@@ -420,13 +423,30 @@ else
   echo ""
   echo "  Applying template to namespace: $VM_NAMESPACE..."
   
+  # Verify we're using the correct kubeconfig (target cluster)
+  if [[ -n "${KUBECONFIG:-}" && -f "$KUBECONFIG" ]]; then
+    CURRENT_CLUSTER=$(oc config view --minify -o jsonpath='{.contexts[0].context.cluster}' 2>/dev/null || echo "")
+    echo "  Using kubeconfig: $KUBECONFIG"
+    echo "  Current cluster context: $CURRENT_CLUSTER"
+    echo "  Target cluster: $TARGET_CLUSTER"
+  else
+    echo "  ⚠️  Warning: KUBECONFIG not set or file not found, using default context"
+    echo "  This may apply to the wrong cluster!"
+  fi
+  
   # Now apply the template and capture the output and exit code
+  # The oc apply will use the KUBECONFIG set earlier (target cluster's kubeconfig)
   APPLY_OUTPUT=$(oc apply -n "$VM_NAMESPACE" -f "$TEMPLATE_OUTPUT_FILE" 2>&1)
   APPLY_EXIT_CODE=$?
   
   if [[ $APPLY_EXIT_CODE -eq 0 ]]; then
     echo "  ✅ Helm template applied successfully to namespace $VM_NAMESPACE"
-    echo "$APPLY_OUTPUT" | head -20  # Show first 20 lines of output
+    echo ""
+    echo "  Apply output:"
+    echo "$APPLY_OUTPUT" | head -30 | sed 's/^/    /'
+    if [[ $(echo "$APPLY_OUTPUT" | wc -l) -gt 30 ]]; then
+      echo "    ... (output truncated, showing first 30 lines)"
+    fi
     
     # Verify resources were created
     echo ""
@@ -461,14 +481,74 @@ else
     fi
   else
     echo "  ❌ Error: Failed to apply helm template"
-    echo "  Exit code: $APPLY_EXIT_CODE"
-    echo "  Error output:"
-    echo "$APPLY_OUTPUT"
     echo ""
-    echo "  Debugging information:"
+    echo "  ========================================"
+    echo "  ERROR DETAILS"
+    echo "  ========================================"
+    echo "  Exit code: $APPLY_EXIT_CODE"
+    echo ""
+    echo "  Full error output:"
+    echo "  ----------------------------------------"
+    echo "$APPLY_OUTPUT" | sed 's/^/  /'
+    echo "  ----------------------------------------"
+    echo ""
+    echo "  ========================================"
+    echo "  DEBUGGING INFORMATION"
+    echo "  ========================================"
     echo "  - Namespace $VM_NAMESPACE exists: $(oc get namespace "$VM_NAMESPACE" &>/dev/null && echo "yes" || echo "no")"
+    if oc get namespace "$VM_NAMESPACE" &>/dev/null; then
+      echo "  - Namespace $VM_NAMESPACE status:"
+      oc get namespace "$VM_NAMESPACE" -o jsonpath='{.status.phase}' 2>/dev/null || echo "    (could not get status)"
+    fi
     echo "  - Helm chart URL: $HELM_CHART_URL"
     echo "  - Values file: $VALUES_FILE"
+    echo "  - Values file exists: $([ -f "$VALUES_FILE" ] && echo "yes" || echo "no")"
+    echo "  - Template file: $TEMPLATE_OUTPUT_FILE"
+    echo "  - Template file exists: $([ -f "$TEMPLATE_OUTPUT_FILE" ] && echo "yes" || echo "no")"
+    echo "  - Template file size: $(wc -c < "$TEMPLATE_OUTPUT_FILE" 2>/dev/null || echo "0") bytes"
+    echo ""
+    echo "  ========================================"
+    echo "  TEMPLATE FILE PREVIEW (first 100 lines)"
+    echo "  ========================================"
+    if [[ -f "$TEMPLATE_OUTPUT_FILE" ]]; then
+      head -100 "$TEMPLATE_OUTPUT_FILE" | sed 's/^/  /'
+      if [[ $(wc -l < "$TEMPLATE_OUTPUT_FILE" 2>/dev/null || echo "0") -gt 100 ]]; then
+        echo "  ... (file truncated, showing first 100 lines)"
+        echo "  Full template saved at: $TEMPLATE_OUTPUT_FILE"
+      fi
+    else
+      echo "  Template file not found!"
+    fi
+    echo ""
+    echo "  ========================================"
+    echo "  PERMISSIONS CHECK"
+    echo "  ========================================"
+    echo "  - Can create resources in namespace $VM_NAMESPACE:"
+    if oc auth can-i create virtualmachines -n "$VM_NAMESPACE" &>/dev/null; then
+      echo "    ✅ Yes (VirtualMachines)"
+    else
+      echo "    ❌ No (VirtualMachines)"
+    fi
+    if oc auth can-i create services -n "$VM_NAMESPACE" &>/dev/null; then
+      echo "    ✅ Yes (Services)"
+    else
+      echo "    ❌ No (Services)"
+    fi
+    if oc auth can-i create routes -n "$VM_NAMESPACE" &>/dev/null; then
+      echo "    ✅ Yes (Routes)"
+    else
+      echo "    ❌ No (Routes)"
+    fi
+    echo ""
+    echo "  ========================================"
+    echo "  SUGGESTED ACTIONS"
+    echo "  ========================================"
+    echo "  1. Check the full error output above"
+    echo "  2. Inspect the template file: $TEMPLATE_OUTPUT_FILE"
+    echo "  3. Verify namespace exists: oc get namespace $VM_NAMESPACE"
+    echo "  4. Check permissions: oc auth can-i create virtualmachines -n $VM_NAMESPACE"
+    echo "  5. Try applying manually: oc apply -n $VM_NAMESPACE -f $TEMPLATE_OUTPUT_FILE"
+    echo ""
     exit 1
   fi
 fi
