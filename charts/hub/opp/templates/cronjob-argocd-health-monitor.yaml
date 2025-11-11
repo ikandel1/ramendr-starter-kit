@@ -17,7 +17,8 @@ spec:
   failedJobsHistoryLimit: 3
   jobTemplate:
     spec:
-      backoffLimit: 20  # Increased for long cluster startup times (up to 1 hour)
+      backoffLimit: 20  # Increased for long cluster startup times
+      activeDeadlineSeconds: 6000  # 100 minutes - allows for 90 minutes of script execution plus buffer
       template:
         spec:
           restartPolicy: OnFailure

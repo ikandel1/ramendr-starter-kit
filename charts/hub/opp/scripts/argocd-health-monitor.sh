@@ -4,7 +4,7 @@ set -euo pipefail
 echo "Starting ArgoCD health monitoring and remediation..."
 
 # Configuration
-MAX_ATTEMPTS=120  # Check 120 times (1 hour with 30s intervals) before failing
+MAX_ATTEMPTS=180  # Check 180 times (90 minutes with 30s intervals) before failing
 SLEEP_INTERVAL=30
 ARGOCD_NAMESPACE="openshift-gitops"
 HEALTH_CHECK_TIMEOUT=60
