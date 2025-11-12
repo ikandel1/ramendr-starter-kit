@@ -2,7 +2,7 @@
 storageSystem:
   deploy: true
   inventory:
-    nodeJobLabelSelector: 'node-role.kubernetes.io/worker=,!node-role.kubernetes.io/infra='
+    nodeJobLabelSelector: 'node-role.kubernetes.io/worker=,!node-role.kubernetes.io/infra'
     useSpecificNodes: false
 
 objectStorage:
