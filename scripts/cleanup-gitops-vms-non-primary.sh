@@ -12,8 +12,9 @@ set -euo pipefail
 HELM_CHART_URL="https://github.com/validatedpatterns/helm-charts/releases/download/main/edge-gitops-vms-0.2.10.tgz"
 WORK_DIR="/tmp/edge-gitops-vms-cleanup"
 VM_NAMESPACE="gitops-vms"
-PRIMARY_CLUSTER="ocp-primary"
-NON_PRIMARY_CLUSTER="${1:-ocp-secondary}"  # Allow cluster name as argument, default to ocp-secondary
+DRPC_NAMESPACE="openshift-dr-ops"
+DRPC_NAME="gitops-vm-protection"
+PLACEMENT_NAME="gitops-vm-protection-placement-1"
 
 # Colors for output
 RED='\033[0;31m'
@@ -21,15 +22,138 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
-echo "=========================================="
-echo "GitOps VMs Cleanup Script"
-echo "=========================================="
-echo "Target cluster: $NON_PRIMARY_CLUSTER"
-echo "Namespace: $VM_NAMESPACE"
-echo ""
+# Initialize variables
+PRIMARY_CLUSTER=""
+NON_PRIMARY_CLUSTER=""
 
 # Create working directory
 mkdir -p "$WORK_DIR"
+
+# Function to determine current primary cluster from DRPC
+determine_primary_cluster() {
+  echo "Determining current primary cluster from DRPC..."
+  
+  # Check if DRPC exists
+  if ! oc get drplacementcontrol "$DRPC_NAME" -n "$DRPC_NAMESPACE" &>/dev/null; then
+    echo -e "${YELLOW}  ⚠️  Warning: DRPC $DRPC_NAME not found in namespace $DRPC_NAMESPACE${NC}"
+    echo "  Cannot determine primary cluster from DRPC"
+    return 1
+  fi
+  
+  # First, check PlacementDecision - this is the most reliable way to determine current primary
+  # The PlacementDecision shows which cluster is currently selected by the Placement
+  local placement_cluster=$(oc get placementdecision -n "$DRPC_NAMESPACE" \
+    -l cluster.open-cluster-management.io/placement="$PLACEMENT_NAME" \
+    -o jsonpath='{.items[0].status.decisions[0].clusterName}' 2>/dev/null || echo "")
+  
+  if [[ -n "$placement_cluster" ]]; then
+    PRIMARY_CLUSTER="$placement_cluster"
+    echo "  ✅ Current primary cluster from PlacementDecision: $PRIMARY_CLUSTER"
+    echo "    (This is the cluster where VMs are currently deployed)"
+    return 0
+  fi
+  
+  # Fallback: Get preferred cluster from DRPC spec
+  local preferred_cluster=$(oc get drplacementcontrol "$DRPC_NAME" -n "$DRPC_NAMESPACE" \
+    -o jsonpath='{.spec.preferredCluster}' 2>/dev/null || echo "")
+  
+  if [[ -n "$preferred_cluster" ]]; then
+    PRIMARY_CLUSTER="$preferred_cluster"
+    echo "  ⚠️  Using preferred cluster from DRPC spec: $PRIMARY_CLUSTER"
+    echo "    (PlacementDecision not available - this may not reflect current state after failover)"
+    return 0
+  fi
+  
+  echo -e "${YELLOW}  ⚠️  Warning: Could not determine primary cluster from DRPC${NC}"
+  echo "    - PlacementDecision not found for $PLACEMENT_NAME"
+  echo "    - DRPC preferredCluster not found"
+  return 1
+}
+
+# Function to determine non-primary cluster
+determine_non_primary_cluster() {
+  echo "Determining non-primary cluster for cleanup..."
+  
+  # Get all clusters from DRPolicy
+  local dr_policy_name=$(oc get drplacementcontrol "$DRPC_NAME" -n "$DRPC_NAMESPACE" \
+    -o jsonpath='{.spec.drPolicyRef.name}' 2>/dev/null || echo "")
+  
+  if [[ -z "$dr_policy_name" ]]; then
+    echo -e "${YELLOW}  ⚠️  Warning: Could not get DRPolicy name from DRPC${NC}"
+    return 1
+  fi
+  
+  # Get clusters from DRPolicy
+  local dr_clusters=$(oc get drpolicy "$dr_policy_name" \
+    -o jsonpath='{.spec.drClusters[*]}' 2>/dev/null || echo "")
+  
+  if [[ -z "$dr_clusters" ]]; then
+    echo -e "${YELLOW}  ⚠️  Warning: Could not get DR clusters from DRPolicy${NC}"
+    return 1
+  fi
+  
+  echo "  DR clusters in policy: $dr_clusters"
+  echo "  Current primary cluster: $PRIMARY_CLUSTER"
+  
+  # Find the non-primary cluster
+  NON_PRIMARY_CLUSTER=""
+  for cluster in $dr_clusters; do
+    if [[ "$cluster" != "$PRIMARY_CLUSTER" ]]; then
+      NON_PRIMARY_CLUSTER="$cluster"
+      break
+    fi
+  done
+  
+  if [[ -z "$NON_PRIMARY_CLUSTER" ]]; then
+    echo -e "${RED}  ❌ Error: Could not determine non-primary cluster${NC}"
+    echo "  Primary cluster: $PRIMARY_CLUSTER"
+    echo "  DR clusters: $dr_clusters"
+    return 1
+  fi
+  
+  echo "  ✅ Non-primary cluster determined: $NON_PRIMARY_CLUSTER"
+  return 0
+}
+
+# Main execution starts here
+echo "=========================================="
+echo "GitOps VMs Cleanup Script"
+echo "=========================================="
+echo "DRPC: $DRPC_NAME (namespace: $DRPC_NAMESPACE)"
+echo ""
+
+# Determine primary and non-primary clusters
+if ! determine_primary_cluster; then
+  echo -e "${YELLOW}  ⚠️  Warning: Could not determine primary cluster from DRPC${NC}"
+  echo "  You can specify the non-primary cluster as an argument: $0 <cluster-name>"
+  if [[ -n "${1:-}" ]]; then
+    NON_PRIMARY_CLUSTER="$1"
+    echo "  Using provided cluster: $NON_PRIMARY_CLUSTER"
+  else
+    echo -e "${RED}  ❌ Error: Cannot proceed without determining clusters${NC}"
+    exit 1
+  fi
+else
+  if ! determine_non_primary_cluster; then
+    echo -e "${YELLOW}  ⚠️  Warning: Could not determine non-primary cluster${NC}"
+    if [[ -n "${1:-}" ]]; then
+      NON_PRIMARY_CLUSTER="$1"
+      echo "  Using provided cluster: $NON_PRIMARY_CLUSTER"
+    else
+      echo -e "${RED}  ❌ Error: Cannot proceed without determining non-primary cluster${NC}"
+      exit 1
+    fi
+  fi
+fi
+
+echo ""
+echo "=========================================="
+echo "Cleanup Configuration"
+echo "=========================================="
+echo "Primary cluster: ${PRIMARY_CLUSTER:-<not determined>}"
+echo "Non-primary cluster (target for cleanup): $NON_PRIMARY_CLUSTER"
+echo "Namespace: $VM_NAMESPACE"
+echo ""
 
 # Function to get kubeconfig for a managed cluster
 get_cluster_kubeconfig() {
