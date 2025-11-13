@@ -62,7 +62,7 @@ clusterGroup:
       #chartVersion: fix-acm-policies-without-clustergroup-label
       #path: "."
       ignoreDifferences:
-        - group: internal.open-cluster-management.io
+        - apiVersion: internal.open-cluster-management.io/v1beta1
           kind: ManagedClusterInfo
 
     ensure-openshift-console-plugins:
