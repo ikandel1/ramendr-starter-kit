@@ -710,19 +710,56 @@ with open('$WORK_DIR/ramen-configmap-updated.yaml', 'w') as f:
   echo "  Update output: $UPDATE_OUTPUT"
   
   if [[ $UPDATE_EXIT_CODE -eq 0 ]]; then
-    # Verify the update was successful
+    # Verify the update was successful - CRITICAL: must verify CA material is in s3StoreProfiles
     sleep 2
     VERIFIED_YAML=$(oc get configmap ramen-hub-operator-config -n openshift-operators -o jsonpath='{.data.ramen_manager_config\.yaml}' 2>/dev/null || echo "")
     
-    if echo "$VERIFIED_YAML" | grep -q "s3StoreProfiles" && echo "$VERIFIED_YAML" | grep -q "caCertificates" && echo "$VERIFIED_YAML" | grep -q "$CA_BUNDLE_BASE64"; then
+    # Strict verification: must have s3StoreProfiles, caCertificates, and the actual CA bundle
+    VERIFICATION_PASSED=true
+    VERIFICATION_ERRORS=()
+    
+    if ! echo "$VERIFIED_YAML" | grep -q "s3StoreProfiles"; then
+      VERIFICATION_PASSED=false
+      VERIFICATION_ERRORS+=("s3StoreProfiles not found in ConfigMap")
+    fi
+    
+    if ! echo "$VERIFIED_YAML" | grep -q "caCertificates"; then
+      VERIFICATION_PASSED=false
+      VERIFICATION_ERRORS+=("caCertificates not found in ConfigMap")
+    fi
+    
+    if ! echo "$VERIFIED_YAML" | grep -q "$CA_BUNDLE_BASE64"; then
+      VERIFICATION_PASSED=false
+      VERIFICATION_ERRORS+=("CA bundle base64 data not found in ConfigMap")
+    fi
+    
+    # Additional check: verify that each s3StoreProfiles item has caCertificates
+    if echo "$VERIFIED_YAML" | grep -q "s3StoreProfiles"; then
+      # Count profiles and verify each has caCertificates
+      PROFILE_COUNT=$(echo "$VERIFIED_YAML" | grep -c "^- name:" || echo "0")
+      CA_CERT_COUNT=$(echo "$VERIFIED_YAML" | grep -c "caCertificates:" || echo "0")
+      
+      if [[ $PROFILE_COUNT -gt 0 && $CA_CERT_COUNT -lt $PROFILE_COUNT ]]; then
+        VERIFICATION_PASSED=false
+        VERIFICATION_ERRORS+=("Not all s3StoreProfiles items have caCertificates (found $PROFILE_COUNT profiles but only $CA_CERT_COUNT caCertificates)")
+      fi
+    fi
+    
+    if [[ "$VERIFICATION_PASSED" == "true" ]]; then
       echo "  ✅ ramen-hub-operator-config updated and verified successfully"
       echo "     caCertificates added to all s3StoreProfiles items"
+      echo "     CA bundle base64 data verified in ConfigMap"
     else
-      echo "  ⚠️  Warning: ramen-hub-operator-config updated but verification failed"
-      echo "     The caCertificates field may not have been set correctly in s3StoreProfiles"
-      echo "     Current YAML content (first 10 lines):"
-      echo "$VERIFIED_YAML" | head -n 10
+      echo "  ❌ CRITICAL: ramen-hub-operator-config update verification FAILED"
+      echo "     The CA material has NOT been properly added to s3StoreProfiles"
+      for error in "${VERIFICATION_ERRORS[@]}"; do
+        echo "     - $error"
+      done
+      echo "     Current YAML content:"
+      echo "$VERIFIED_YAML"
       echo "     Update output: $UPDATE_OUTPUT"
+      echo "     This is a CRITICAL error - the ConfigMap is not complete and correct"
+      handle_error "ramen-hub-operator-config verification failed - CA material not in s3StoreProfiles"
     fi
   else
     echo "  ❌ Error: Could not update ramen-hub-operator-config using oc set data"
@@ -784,13 +821,49 @@ with open('$WORK_DIR/ramen-patch.json', 'w') as f:
             sleep 2
             VERIFIED_YAML=$(oc get configmap ramen-hub-operator-config -n openshift-operators -o jsonpath='{.data.ramen_manager_config\.yaml}' 2>/dev/null || echo "")
             
-            if echo "$VERIFIED_YAML" | grep -q "s3StoreProfiles" && echo "$VERIFIED_YAML" | grep -q "caCertificates" && echo "$VERIFIED_YAML" | grep -q "$CA_BUNDLE_BASE64"; then
+            # Strict verification for oc patch approach
+            VERIFICATION_PASSED=true
+            VERIFICATION_ERRORS=()
+            
+            if ! echo "$VERIFIED_YAML" | grep -q "s3StoreProfiles"; then
+              VERIFICATION_PASSED=false
+              VERIFICATION_ERRORS+=("s3StoreProfiles not found")
+            fi
+            
+            if ! echo "$VERIFIED_YAML" | grep -q "caCertificates"; then
+              VERIFICATION_PASSED=false
+              VERIFICATION_ERRORS+=("caCertificates not found")
+            fi
+            
+            if ! echo "$VERIFIED_YAML" | grep -q "$CA_BUNDLE_BASE64"; then
+              VERIFICATION_PASSED=false
+              VERIFICATION_ERRORS+=("CA bundle base64 data not found")
+            fi
+            
+            # Verify each profile has caCertificates
+            if echo "$VERIFIED_YAML" | grep -q "s3StoreProfiles"; then
+              PROFILE_COUNT=$(echo "$VERIFIED_YAML" | grep -c "^- name:" || echo "0")
+              CA_CERT_COUNT=$(echo "$VERIFIED_YAML" | grep -c "caCertificates:" || echo "0")
+              
+              if [[ $PROFILE_COUNT -gt 0 && $CA_CERT_COUNT -lt $PROFILE_COUNT ]]; then
+                VERIFICATION_PASSED=false
+                VERIFICATION_ERRORS+=("Not all profiles have caCertificates ($PROFILE_COUNT profiles, $CA_CERT_COUNT caCertificates)")
+              fi
+            fi
+            
+            if [[ "$VERIFICATION_PASSED" == "true" ]]; then
               echo "  ✅ ramen-hub-operator-config updated using oc patch approach"
+              echo "     CA material verified in all s3StoreProfiles items"
             else
-              echo "  ⚠️  Warning: oc patch applied but verification failed"
-              echo "     Current YAML content (first 10 lines):"
-              echo "$VERIFIED_YAML" | head -n 10
+              echo "  ❌ CRITICAL: oc patch applied but verification FAILED"
+              echo "     The CA material has NOT been properly added to s3StoreProfiles"
+              for error in "${VERIFICATION_ERRORS[@]}"; do
+                echo "     - $error"
+              done
+              echo "     Current YAML content:"
+              echo "$VERIFIED_YAML"
               echo "     Patch output: $PATCH_OUTPUT"
+              handle_error "ramen-hub-operator-config verification failed after oc patch - CA material not in s3StoreProfiles"
             fi
           else
             echo "  ❌ oc patch approach also failed"
@@ -1053,12 +1126,75 @@ else
   echo "✅ All managed clusters verified successfully"
 fi
 
+# Final verification: Ensure ramen-hub-operator-config is complete and correct
+echo ""
+echo "11. Final verification: Ensuring ramen-hub-operator-config is complete and correct..."
+FINAL_VERIFIED_YAML=$(oc get configmap ramen-hub-operator-config -n openshift-operators -o jsonpath='{.data.ramen_manager_config\.yaml}' 2>/dev/null || echo "")
+
+if [[ -z "$FINAL_VERIFIED_YAML" ]]; then
+  echo "  ❌ CRITICAL: ramen-hub-operator-config ConfigMap not found or empty"
+  handle_error "ramen-hub-operator-config ConfigMap is missing or empty - CA material not configured"
+fi
+
+FINAL_VERIFICATION_PASSED=true
+FINAL_VERIFICATION_ERRORS=()
+
+if ! echo "$FINAL_VERIFIED_YAML" | grep -q "s3StoreProfiles"; then
+  FINAL_VERIFICATION_PASSED=false
+  FINAL_VERIFICATION_ERRORS+=("s3StoreProfiles not found in final verification")
+fi
+
+if ! echo "$FINAL_VERIFIED_YAML" | grep -q "caCertificates"; then
+  FINAL_VERIFICATION_PASSED=false
+  FINAL_VERIFICATION_ERRORS+=("caCertificates not found in final verification")
+fi
+
+if ! echo "$FINAL_VERIFIED_YAML" | grep -q "$CA_BUNDLE_BASE64"; then
+  FINAL_VERIFICATION_PASSED=false
+  FINAL_VERIFICATION_ERRORS+=("CA bundle base64 data not found in final verification")
+fi
+
+# Verify each profile has caCertificates
+if echo "$FINAL_VERIFIED_YAML" | grep -q "s3StoreProfiles"; then
+  FINAL_PROFILE_COUNT=$(echo "$FINAL_VERIFIED_YAML" | grep -c "^- name:" || echo "0")
+  FINAL_CA_CERT_COUNT=$(echo "$FINAL_VERIFIED_YAML" | grep -c "caCertificates:" || echo "0")
+  
+  if [[ $FINAL_PROFILE_COUNT -gt 0 && $FINAL_CA_CERT_COUNT -lt $FINAL_PROFILE_COUNT ]]; then
+    FINAL_VERIFICATION_PASSED=false
+    FINAL_VERIFICATION_ERRORS+=("Not all s3StoreProfiles items have caCertificates (found $FINAL_PROFILE_COUNT profiles but only $FINAL_CA_CERT_COUNT caCertificates)")
+  fi
+  
+  if [[ $FINAL_PROFILE_COUNT -eq 0 ]]; then
+    FINAL_VERIFICATION_PASSED=false
+    FINAL_VERIFICATION_ERRORS+=("No s3StoreProfiles items found in ConfigMap")
+  fi
+fi
+
+if [[ "$FINAL_VERIFICATION_PASSED" != "true" ]]; then
+  echo "  ❌ CRITICAL: Final verification FAILED - ramen-hub-operator-config is NOT complete and correct"
+  echo "     The CA material has NOT been properly added to s3StoreProfiles"
+  for error in "${FINAL_VERIFICATION_ERRORS[@]}"; do
+    echo "     - $error"
+  done
+  echo "     Current ConfigMap YAML content:"
+  echo "$FINAL_VERIFIED_YAML"
+  echo ""
+  echo "     The ConfigMap edit is not complete and correct until the CA material has been added to the S3profiles."
+  echo "     This is a CRITICAL error - the job cannot complete successfully."
+  handle_error "Final verification failed - ramen-hub-operator-config is not complete and correct - CA material not in s3StoreProfiles"
+fi
+
+echo "  ✅ Final verification passed: ramen-hub-operator-config is complete and correct"
+echo "     - s3StoreProfiles found: $FINAL_PROFILE_COUNT profile(s)"
+echo "     - caCertificates found: $FINAL_CA_CERT_COUNT certificate(s)"
+echo "     - CA bundle base64 data verified in all profiles"
+
 echo ""
 echo "✅ ODF SSL certificate management completed successfully!"
 echo "   - Hub cluster CA bundle: Updated (includes trusted CA + ingress CA)"
 echo "   - Hub cluster proxy: Configured"
 echo "   - Managed clusters: ramenddr-cluster-operator pods restarted"
-echo "   - ramen-hub-operator-config: Updated with base64-encoded CA bundle in s3StoreProfiles (hub cluster)"
+echo "   - ramen-hub-operator-config: Updated and VERIFIED with base64-encoded CA bundle in s3StoreProfiles (hub cluster)"
 echo "   - Managed clusters: Velero pods restarted (openshift-adp namespace)"
 echo "   - Managed clusters: Certificate data distributed (includes ingress CAs)"
 echo ""
