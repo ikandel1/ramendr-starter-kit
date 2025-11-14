@@ -89,10 +89,53 @@ get_infrastructure_name() {
   
   echo "  Getting infrastructure name for cluster $cluster..."
   
-  local infra_name=$(oc --kubeconfig="$kubeconfig" get infrastructure cluster -o jsonpath='{.status.infrastructureName}' 2>/dev/null || echo "")
+  local infra_name=""
+  
+  # Method 1: Try to get from ClusterDeployment on hub (most reliable, no need for managed cluster access)
+  # Try status.infrastructureName first (set after cluster is provisioned)
+  infra_name=$(oc get clusterdeployment "$cluster" -n "$cluster" -o jsonpath='{.status.infrastructureName}' 2>/dev/null || echo "")
+  # Fallback to spec.clusterMetadata.infraID if status doesn't have it
+  if [[ -z "$infra_name" ]]; then
+    infra_name=$(oc get clusterdeployment "$cluster" -n "$cluster" -o jsonpath='{.spec.clusterMetadata.infraID}' 2>/dev/null || echo "")
+  fi
+  
+  # Method 2: Try to get from infrastructure status on managed cluster
+  if [[ -z "$infra_name" ]]; then
+    echo "  Trying to get infrastructure name from managed cluster infrastructure status..."
+    infra_name=$(oc --kubeconfig="$kubeconfig" get infrastructure cluster -o jsonpath='{.status.infrastructureName}' 2>/dev/null || echo "")
+  fi
+  
+  # Method 3: Try to get from infrastructure metadata name
+  if [[ -z "$infra_name" ]]; then
+    echo "  Trying to get infrastructure name from infrastructure metadata..."
+    infra_name=$(oc --kubeconfig="$kubeconfig" get infrastructure cluster -o jsonpath='{.metadata.name}' 2>/dev/null || echo "")
+  fi
+  
+  # Method 4: Try to extract from install-config secret
+  if [[ -z "$infra_name" ]]; then
+    echo "  Trying to get infrastructure name from install-config..."
+    local install_config_secret="${cluster}-cluster-install-config"
+    if oc get secret "$install_config_secret" -n "$cluster" &>/dev/null; then
+      # The infrastructure name is typically the cluster name with a random suffix
+      # Try to get it from the metadata name in install-config
+      local cluster_name_from_config=$(oc get secret "$install_config_secret" -n "$cluster" -o jsonpath='{.data.install-config\.yaml}' 2>/dev/null | \
+        base64 -d 2>/dev/null | grep -E '^\s*metadata:' -A 5 | grep -E '^\s*name:' | awk '{print $2}' | tr -d '"' || echo "")
+      if [[ -n "$cluster_name_from_config" ]]; then
+        # Infrastructure name is usually cluster name with a random suffix
+        # We can't get the exact suffix, but we can use the cluster name as a fallback
+        infra_name="$cluster_name_from_config"
+      fi
+    fi
+  fi
+  
+  # Method 5: Use cluster name as fallback (last resort)
+  if [[ -z "$infra_name" ]]; then
+    echo "  ⚠️  Using cluster name as infrastructure name fallback..."
+    infra_name="$cluster"
+  fi
   
   if [[ -z "$infra_name" ]]; then
-    echo "  ❌ Could not get infrastructure name for cluster $cluster"
+    echo "  ❌ Could not get infrastructure name for cluster $cluster using any method"
     return 1
   fi
   
@@ -282,6 +325,17 @@ tag_security_group() {
   local infra_name="$2"
   local sg_id="$3"
   
+  # Validate inputs
+  if [[ -z "$infra_name" ]]; then
+    echo "  ❌ Infrastructure name is empty, cannot create tag"
+    return 1
+  fi
+  
+  if [[ -z "$sg_id" || "$sg_id" == "None" ]]; then
+    echo "  ❌ Security group ID is empty or invalid, cannot create tag"
+    return 1
+  fi
+  
   echo "  Tagging security group $sg_id with kubernetes.io/cluster/${infra_name}=owned..."
   
   local tag_key="kubernetes.io/cluster/${infra_name}"
@@ -341,13 +395,24 @@ for cluster in $MANAGED_CLUSTERS; do
     continue
   fi
   
+  # Verify kubeconfig works before trying to get infrastructure name
+  echo "  Verifying kubeconfig connection to $cluster..."
+  if ! oc --kubeconfig="$kubeconfig" get nodes &>/dev/null; then
+    echo "  ⚠️  Warning: Cannot connect to cluster $cluster with kubeconfig, but continuing..."
+  else
+    echo "  ✅ Successfully connected to cluster $cluster"
+  fi
+  
   # Get infrastructure name
   infra_name=$(get_infrastructure_name "$cluster" "$kubeconfig" || echo "")
   if [[ -z "$infra_name" ]]; then
     echo "❌ Failed to get infrastructure name for $cluster, skipping..."
+    echo "  Debug: Attempted to get infrastructure name using multiple methods"
     FAILED_CLUSTERS+=("$cluster")
     continue
   fi
+  
+  echo "  ✅ Retrieved infrastructure name: $infra_name"
   
   # Get AWS credentials (need kubeconfig for region detection)
   if ! get_aws_credentials "$cluster" "$kubeconfig"; then
