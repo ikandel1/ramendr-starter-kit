@@ -8,6 +8,7 @@ clusterGroup:
     - golang-external-secrets
     - regional-dr
     - openshift-dr-system
+    - openshift-dr-ops
     - openshift-storage
     - policies
     # - regional-dr-trigger
