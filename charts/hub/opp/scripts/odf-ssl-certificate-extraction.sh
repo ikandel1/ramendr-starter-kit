@@ -453,8 +453,9 @@ if oc get configmap ramen-hub-operator-config -n openshift-operators &>/dev/null
   # CRITICAL: Verify at least 2 S3profiles exist before attempting update
   MIN_REQUIRED_PROFILES=2
   if [[ -n "$EXISTING_YAML" ]]; then
-    EXISTING_PROFILE_COUNT=$(echo "$EXISTING_YAML" | grep -c "^- name:" 2>/dev/null | tr -d ' \n' || echo "0")
-    EXISTING_PROFILE_COUNT=${EXISTING_PROFILE_COUNT:-0}
+    EXISTING_PROFILE_COUNT=$(echo "$EXISTING_YAML" | grep -c "^- name:" 2>/dev/null || echo "0")
+    EXISTING_PROFILE_COUNT=$(echo "$EXISTING_PROFILE_COUNT" | tr -d ' \n\r' | grep -E '^[0-9]+$' || echo "0")
+    EXISTING_PROFILE_COUNT=$((10#$EXISTING_PROFILE_COUNT))
     if [[ $EXISTING_PROFILE_COUNT -lt $MIN_REQUIRED_PROFILES ]]; then
       echo "  ❌ CRITICAL: Insufficient s3StoreProfiles found in existing ConfigMap"
       echo "     Found: $EXISTING_PROFILE_COUNT profile(s)"
@@ -758,10 +759,12 @@ with open('$WORK_DIR/ramen-configmap-updated.yaml', 'w') as f:
     MIN_REQUIRED_PROFILES=2
     if echo "$VERIFIED_YAML" | grep -q "s3StoreProfiles"; then
       # Count profiles and verify each has caCertificates
-      PROFILE_COUNT=$(echo "$VERIFIED_YAML" | grep -c "^- name:" 2>/dev/null | tr -d ' \n' || echo "0")
-      CA_CERT_COUNT=$(echo "$VERIFIED_YAML" | grep -c "caCertificates:" 2>/dev/null | tr -d ' \n' || echo "0")
-      PROFILE_COUNT=${PROFILE_COUNT:-0}
-      CA_CERT_COUNT=${CA_CERT_COUNT:-0}
+      PROFILE_COUNT=$(echo "$VERIFIED_YAML" | grep -c "^- name:" 2>/dev/null || echo "0")
+      CA_CERT_COUNT=$(echo "$VERIFIED_YAML" | grep -c "caCertificates:" 2>/dev/null || echo "0")
+      PROFILE_COUNT=$(echo "$PROFILE_COUNT" | tr -d ' \n\r' | grep -E '^[0-9]+$' || echo "0")
+      CA_CERT_COUNT=$(echo "$CA_CERT_COUNT" | tr -d ' \n\r' | grep -E '^[0-9]+$' || echo "0")
+      PROFILE_COUNT=$((10#$PROFILE_COUNT))
+      CA_CERT_COUNT=$((10#$CA_CERT_COUNT))
       
       # Check if we have at least the minimum required profiles
       if [[ $PROFILE_COUNT -lt $MIN_REQUIRED_PROFILES ]]; then
@@ -877,10 +880,12 @@ with open('$WORK_DIR/ramen-patch.json', 'w') as f:
             # CRITICAL: Must find at least 2 S3profiles
             MIN_REQUIRED_PROFILES=2
             if echo "$VERIFIED_YAML" | grep -q "s3StoreProfiles"; then
-              PROFILE_COUNT=$(echo "$VERIFIED_YAML" | grep -c "^- name:" 2>/dev/null | tr -d ' \n' || echo "0")
-              CA_CERT_COUNT=$(echo "$VERIFIED_YAML" | grep -c "caCertificates:" 2>/dev/null | tr -d ' \n' || echo "0")
-              PROFILE_COUNT=${PROFILE_COUNT:-0}
-              CA_CERT_COUNT=${CA_CERT_COUNT:-0}
+              PROFILE_COUNT=$(echo "$VERIFIED_YAML" | grep -c "^- name:" 2>/dev/null || echo "0")
+              CA_CERT_COUNT=$(echo "$VERIFIED_YAML" | grep -c "caCertificates:" 2>/dev/null || echo "0")
+              PROFILE_COUNT=$(echo "$PROFILE_COUNT" | tr -d ' \n\r' | grep -E '^[0-9]+$' || echo "0")
+              CA_CERT_COUNT=$(echo "$CA_CERT_COUNT" | tr -d ' \n\r' | grep -E '^[0-9]+$' || echo "0")
+              PROFILE_COUNT=$((10#$PROFILE_COUNT))
+              CA_CERT_COUNT=$((10#$CA_CERT_COUNT))
               
               # Check if we have at least the minimum required profiles
               if [[ $PROFILE_COUNT -lt $MIN_REQUIRED_PROFILES ]]; then
@@ -1204,10 +1209,19 @@ fi
 # CRITICAL: Must find at least 2 S3profiles
 MIN_REQUIRED_PROFILES=2
 if echo "$FINAL_VERIFIED_YAML" | grep -q "s3StoreProfiles"; then
-  FINAL_PROFILE_COUNT=$(echo "$FINAL_VERIFIED_YAML" | grep -c "^- name:" 2>/dev/null | tr -d ' \n' || echo "0")
-  FINAL_CA_CERT_COUNT=$(echo "$FINAL_VERIFIED_YAML" | grep -c "caCertificates:" 2>/dev/null | tr -d ' \n' || echo "0")
-  FINAL_PROFILE_COUNT=${FINAL_PROFILE_COUNT:-0}
-  FINAL_CA_CERT_COUNT=${FINAL_CA_CERT_COUNT:-0}
+  # Count profiles - ensure we get a numeric value
+  FINAL_PROFILE_COUNT=$(echo "$FINAL_VERIFIED_YAML" | grep -c "^- name:" 2>/dev/null || echo "0")
+  FINAL_CA_CERT_COUNT=$(echo "$FINAL_VERIFIED_YAML" | grep -c "caCertificates:" 2>/dev/null || echo "0")
+  
+  # Remove any whitespace/newlines and ensure numeric
+  FINAL_PROFILE_COUNT=$(echo "$FINAL_PROFILE_COUNT" | tr -d ' \n\r' | grep -E '^[0-9]+$' || echo "0")
+  FINAL_CA_CERT_COUNT=$(echo "$FINAL_CA_CERT_COUNT" | tr -d ' \n\r' | grep -E '^[0-9]+$' || echo "0")
+  
+  # Force to integer (remove leading zeros)
+  FINAL_PROFILE_COUNT=$((10#$FINAL_PROFILE_COUNT))
+  FINAL_CA_CERT_COUNT=$((10#$FINAL_CA_CERT_COUNT))
+  
+  echo "  Debug: FINAL_PROFILE_COUNT=$FINAL_PROFILE_COUNT, FINAL_CA_CERT_COUNT=$FINAL_CA_CERT_COUNT, MIN_REQUIRED=$MIN_REQUIRED_PROFILES"
   
   # Check if we have at least the minimum required profiles
   if [[ $FINAL_PROFILE_COUNT -lt $MIN_REQUIRED_PROFILES ]]; then
@@ -1222,7 +1236,7 @@ if echo "$FINAL_VERIFIED_YAML" | grep -q "s3StoreProfiles"; then
   
   if [[ $FINAL_PROFILE_COUNT -eq 0 ]]; then
     FINAL_VERIFICATION_PASSED=false
-    FINAL_VERIFICATION_ERRORS+=("No s3StoreProfiles items found in ConfigMap")
+    FINAL_VERIFICATION_ERRORS+=("No s3StoreProfiles items found in ConfigMap (s3StoreProfiles array is empty)")
   fi
 else
   FINAL_VERIFICATION_PASSED=false
