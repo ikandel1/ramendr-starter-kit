@@ -62,7 +62,7 @@ fi
 
 # Detect if we use podman machine. If we do not then we bind mount local host ssl folders
 # if we are using podman machine then we do not bind mount anything (for now!)
-REMOTE_PODMAN=$(podman system connection list -q | wc -l)
+REMOTE_PODMAN=$(podman system connection list | tail -n +2 | wc -l)
 if [ $REMOTE_PODMAN -eq 0 ]; then # If we are not using podman machine we check the hosts folders
     # We check /etc/pki/tls because on ubuntu /etc/pki/fwupd sometimes
     # exists but not /etc/pki/tls and we do not want to bind mount in such a case
@@ -84,29 +84,34 @@ fi
 
 podman run -it --rm --pull=newer \
     --security-opt label=disable \
+    -e ANSIBLE_STDOUT_CALLBACK \
+    -e DISABLE_VALIDATE_ORIGIN \
     -e EXTRA_HELM_OPTS \
     -e EXTRA_PLAYBOOK_OPTS \
-    -e TARGET_ORIGIN \
-    -e TARGET_SITE \
-    -e TARGET_BRANCH \
-    -e NAME \
-    -e TOKEN_SECRET \
-    -e TOKEN_NAMESPACE \
-    -e VALUES_SECRET \
-    -e KUBECONFIG \
-    -e PATTERN_INSTALL_CHART \
-    -e PATTERN_DISCONNECTED_HOME \
     -e K8S_AUTH_HOST \
-    -e K8S_AUTH_VERIFY_SSL \
-    -e K8S_AUTH_SSL_CA_CERT \
-    -e K8S_AUTH_USERNAME \
     -e K8S_AUTH_PASSWORD \
+    -e K8S_AUTH_SSL_CA_CERT \
     -e K8S_AUTH_TOKEN \
+    -e K8S_AUTH_USERNAME \
+    -e K8S_AUTH_VERIFY_SSL \
+    -e KUBECONFIG \
+    -e PATTERN_DIR \
+    -e PATTERN_DISCONNECTED_HOME \
+    -e PATTERN_INSTALL_CHART \
+    -e PATTERN_NAME \
+    -e TARGET_BRANCH \
+    -e TARGET_CLUSTERGROUP \
+    -e TARGET_ORIGIN \
+    -e TOKEN_NAMESPACE \
+    -e TOKEN_SECRET \
+    -e UUID_FILE \
+    -e VALUES_SECRET \
     ${PKI_HOST_MOUNT_ARGS} \
+    -v "$(pwd -P)":"$(pwd -P)" \
     -v "${HOME}":"${HOME}" \
     -v "${HOME}":/pattern-home \
     ${PODMAN_ARGS} \
     ${EXTRA_ARGS} \
-    -w "$(pwd)" \
+    -w "$(pwd -P)" \
     "$PATTERN_UTILITY_CONTAINER" \
     $@
