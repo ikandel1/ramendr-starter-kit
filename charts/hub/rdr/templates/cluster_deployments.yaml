@@ -7,14 +7,6 @@ apiVersion: v1
 kind: Namespace
 metadata:
   name: {{ $cluster.name }}
-  labels:
-    cluster.open-cluster-management.io/managedCluster: {{ $cluster.name }}
-    kubernetes.io/metadata.name: {{ $cluster.name }}
-    open-cluster-management.io/cluster-name: {{ $cluster.name }}
-    pod-security.kubernetes.io/audit: restricted
-    pod-security.kubernetes.io/audit-version: latest
-    pod-security.kubernetes.io/warn: restricted
-    pod-security.kubernetes.io/warn-version: latest
 
 ---
 apiVersion: external-secrets.io/v1beta1
