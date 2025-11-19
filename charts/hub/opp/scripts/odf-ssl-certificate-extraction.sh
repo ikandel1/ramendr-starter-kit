@@ -1315,6 +1315,8 @@ fi
 # Initialize variables if they weren't set (e.g., if s3StoreProfiles section was missing)
 FINAL_PROFILE_COUNT=${FINAL_PROFILE_COUNT:-0}
 FINAL_CA_CERT_COUNT=${FINAL_CA_CERT_COUNT:-0}
+# Ensure MIN_REQUIRED_PROFILES is set
+MIN_REQUIRED_PROFILES=${MIN_REQUIRED_PROFILES:-2}
 
 # CRITICAL: Explicitly verify we have at least 2 profiles
 if [[ $FINAL_PROFILE_COUNT -lt $MIN_REQUIRED_PROFILES ]]; then
@@ -1334,6 +1336,18 @@ if [[ $FINAL_PROFILE_COUNT -ne $FINAL_CA_CERT_COUNT ]]; then
   FINAL_VERIFICATION_ERRORS+=("CRITICAL: Profile count ($FINAL_PROFILE_COUNT) does not match caCertificates count ($FINAL_CA_CERT_COUNT)")
 fi
 
+# CRITICAL: Final absolute check - must have at least MIN_REQUIRED_PROFILES profiles
+# This check is redundant but ensures we never pass with insufficient profiles
+if [[ $FINAL_PROFILE_COUNT -lt $MIN_REQUIRED_PROFILES ]]; then
+  FINAL_VERIFICATION_PASSED=false
+  FINAL_VERIFICATION_ERRORS+=("CRITICAL: Final check failed - only $FINAL_PROFILE_COUNT profile(s) found, need at least $MIN_REQUIRED_PROFILES")
+fi
+
+if [[ $FINAL_CA_CERT_COUNT -lt $MIN_REQUIRED_PROFILES ]]; then
+  FINAL_VERIFICATION_PASSED=false
+  FINAL_VERIFICATION_ERRORS+=("CRITICAL: Final check failed - only $FINAL_CA_CERT_COUNT caCertificates found, need at least $MIN_REQUIRED_PROFILES")
+fi
+
 if [[ "$FINAL_VERIFICATION_PASSED" != "true" ]]; then
   echo "  ❌ CRITICAL: Final verification FAILED - ramen-hub-operator-config is NOT complete and correct"
   echo "     The CA material has NOT been properly added to s3StoreProfiles"
@@ -1346,15 +1360,30 @@ if [[ "$FINAL_VERIFICATION_PASSED" != "true" ]]; then
   echo "     The ConfigMap edit is not complete and correct until the CA material has been added to the S3profiles."
   echo "     This is a CRITICAL error - the job cannot complete successfully."
   handle_error "Final verification failed - ramen-hub-operator-config is not complete and correct - CA material not in s3StoreProfiles"
+  # After handle_error, return failure to trigger retry in main loop
+  return 1
 fi
 
-# Final explicit check before declaring success
+# Final absolute safety check before declaring success - this should NEVER be false if we reach here
+# But we check anyway as a last line of defense
 if [[ $FINAL_PROFILE_COUNT -lt $MIN_REQUIRED_PROFILES || $FINAL_CA_CERT_COUNT -lt $MIN_REQUIRED_PROFILES ]]; then
-  echo "  ❌ CRITICAL: Final verification FAILED - insufficient profiles"
+  echo "  ❌ CRITICAL: Final safety check FAILED - insufficient profiles"
   echo "     Found $FINAL_PROFILE_COUNT profile(s) and $FINAL_CA_CERT_COUNT caCertificates, but at least $MIN_REQUIRED_PROFILES are required"
-  handle_error "Final verification failed - ramen-hub-operator-config is not complete and correct - insufficient s3StoreProfiles"
+  echo "     This should never happen - there is a logic error in the verification code"
+  handle_error "Final verification failed - ramen-hub-operator-config is not complete and correct - insufficient s3StoreProfiles (safety check)"
+  return 1
 fi
 
+# CRITICAL: Final check - only print success if we have the required number of profiles
+# This is the absolute last check before declaring success
+if [[ $FINAL_PROFILE_COUNT -lt $MIN_REQUIRED_PROFILES || $FINAL_CA_CERT_COUNT -lt $MIN_REQUIRED_PROFILES ]]; then
+  echo "  ❌ CRITICAL: Final verification FAILED - insufficient profiles in final success check"
+  echo "     Found $FINAL_PROFILE_COUNT profile(s) and $FINAL_CA_CERT_COUNT caCertificates, but at least $MIN_REQUIRED_PROFILES are required"
+  handle_error "Final verification failed - ramen-hub-operator-config is not complete and correct - insufficient s3StoreProfiles (final success check)"
+  return 1
+fi
+
+# Only reach here if we have sufficient profiles - print success message
 echo "  ✅ Final verification passed: ramen-hub-operator-config is complete and correct"
 echo "     - s3StoreProfiles found: $FINAL_PROFILE_COUNT profile(s) (required: at least $MIN_REQUIRED_PROFILES)"
 echo "     - caCertificates found: $FINAL_CA_CERT_COUNT certificate(s) (required: at least $MIN_REQUIRED_PROFILES)"
