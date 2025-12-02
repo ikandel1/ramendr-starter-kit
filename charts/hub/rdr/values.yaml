@@ -12,9 +12,9 @@ regionalDR:
         version: 4.18.7
         install_config:
           apiVersion: v1
+          baseDomain: "{{ $.Values.global.clusterDomain }}"
           metadata:
             name: ocp-primary
-            baseDomain: "{{ $.Values.global.clusterDomain }}"
           controlPlane:
             name: master
             replicas: 3
@@ -50,9 +50,9 @@ regionalDR:
         version: 4.18.7
         install_config:
           apiVersion: v1
+          baseDomain: "{{ $.Values.global.clusterDomain }}"
           metadata:
             name: ocp-secondary
-            baseDomain: "{{ $.Values.global.clusterDomain }}"
           controlPlane:
             name: master
             replicas: 3
