@@ -116,7 +116,7 @@ metadata:
   annotations:
     argocd.argoproj.io/sync-wave: "1"
 spec:
-  baseDomain: {{ tpl $cluster.install_config.metadata.baseDomain $ }}
+  baseDomain: {{ tpl $cluster.install_config.baseDomain $ }}
   clusterName: {{ $cluster.name }}
   installAttemptsLimit: 1
   platform:
