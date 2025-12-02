@@ -1,3 +1,7 @@
+---
+global:
+  clusterDomain: example.com
+
 regionalDR:
   - name: resilient # Matches with ClusterSet
     globalnetEnabled: false # Support for overlapping CIDR
@@ -10,7 +14,7 @@ regionalDR:
           apiVersion: v1
           metadata:
             name: ocp-primary
-          baseDomain: example.com
+            baseDomain: "{{ $.Values.global.clusterDomain }}"
           controlPlane:
             name: master
             replicas: 3
@@ -48,7 +52,7 @@ regionalDR:
           apiVersion: v1
           metadata:
             name: ocp-secondary
-          baseDomain: example.com
+            baseDomain: "{{ $.Values.global.clusterDomain }}"
           controlPlane:
             name: master
             replicas: 3

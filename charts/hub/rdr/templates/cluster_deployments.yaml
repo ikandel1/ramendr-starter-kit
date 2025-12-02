@@ -93,6 +93,7 @@ spec:
       type: Opaque
 
 ---
+{{- $install_config := toYaml $cluster.install_config }}
 apiVersion: v1
 kind: Secret
 metadata:
@@ -100,7 +101,7 @@ metadata:
   namespace: {{ $cluster.name }}
 type: Opaque
 data:
-  install-config.yaml: {{ toYaml $cluster.install_config | b64enc }}
+  install-config.yaml: {{ tpl $install_config $ | b64enc }}
 
 ---
 apiVersion: hive.openshift.io/v1
@@ -115,7 +116,7 @@ metadata:
   annotations:
     argocd.argoproj.io/sync-wave: "1"
 spec:
-  baseDomain: {{ $cluster.install_config.baseDomain }}
+  baseDomain: {{ tpl $cluster.install_config.metadata.baseDomain $ }}
   clusterName: {{ $cluster.name }}
   installAttemptsLimit: 1
   platform:

@@ -126,11 +126,6 @@ clusterGroup:
         # These resources are created by OCM operators and should never be pruned
         - group: internal.open-cluster-management.io
           kind: ManagedClusterInfo
-      overrides:
-        - name: regionalDR.0.clusters.primary.install_config.baseDomain
-          value: '{{ $.Values.global.clusterDomain }}'
-        - name: regionalDR.0.clusters.secondary.install_config.baseDomain
-          value: '{{ $.Values.global.clusterDomain }}'
 
     vault:
       name: vault
