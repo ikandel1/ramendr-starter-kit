@@ -128,9 +128,9 @@ clusterGroup:
           kind: ManagedClusterInfo
       overrides:
         - name: regionalDR.0.clusters.primary.install_config.baseDomain
-          value: {{ $.Values.global.clusterDomain }}
+          value: '{{ $.Values.global.clusterDomain }}'
         - name: regionalDR.0.clusters.secondary.install_config.baseDomain
-          value: {{ $.Values.global.clusterDomain }}
+          value: '{{ $.Values.global.clusterDomain }}'
 
     vault:
       name: vault
