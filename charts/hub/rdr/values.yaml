@@ -38,7 +38,7 @@ regionalDR:
               - 172.20.0.0/16
           platform:
             aws:
-              region: us-west-1
+              region: eu-north-1
               userTags:
                 project: ValidatedPatterns
           publish: External
@@ -76,7 +76,7 @@ regionalDR:
               - 172.21.0.0/16
           platform:
             aws:
-              region: us-east-1
+              region: eu-west-1
               userTags:
                 project: ValidatedPatterns
           publish: External
