@@ -423,24 +423,221 @@ openshift-install destroy cluster --dir=~/git/hub-cluster-install --log-level=in
 | `openshift-install` fails with architecture mismatch | Download the **amd64** version of the installer (not ARM64) |
 | Vault secrets not loading (retrying) | Check vault pod: `oc get pods -n vault`, check status: `oc exec -n vault vault-0 -- vault status` |
 | Managed clusters not provisioning | Check ACM is healthy: `oc get csv -n open-cluster-management`, check Hive: `oc get clusterdeployments -A` |
+| Managed cluster provision fails with `AddressLimitExceeded` | Increase EIP quota: `aws service-quotas request-service-quota-increase --service-code ec2 --quota-code L-0263D0A3 --desired-value 15 --region <REGION>` |
+| Hub ODF pods stuck Pending (`Insufficient cpu`) | Scale hub worker MachineSets: `oc scale machineset <name> -n openshift-machine-api --replicas=2` for each AZ |
+| New hub workers missing ODF label | Label nodes: `oc label node <NODE> cluster.ocs.openshift.io/openshift-storage=""` |
+| ExternalSecrets can't find `secret/hub/privatekey` | Create it in Vault: `oc exec -n vault vault-0 -- vault kv put secret/hub/privatekey privatekey="$(cat ~/.ssh/id_ed25519)"` |
+| `regional-dr` stuck on prerequisites checker | Manually create the Job if ArgoCD sync is deadlocked: `oc apply -f` the Job manifest from `charts/hub/rdr/templates/job-odf-dr-prerequisites.yaml` |
+| Managed cluster shows `ProvisionStopped` but is actually running | If the cluster API is reachable, patch the CD: `oc patch clusterdeployment <name> -n <ns> --type merge -p '{"spec":{"installed":true,"clusterMetadata":{...}}}'` |
+
+### AWS EIP Quota Planning
+
+Each OpenShift cluster uses **3 Elastic IPs** (one per availability zone for NAT gateways). The default AWS limit is **5 EIPs per region**. Plan accordingly:
+
+| Region | Clusters | EIPs Needed | Recommended Quota |
+|---|---|---|---|
+| `eu-north-1` | hub + ocp-primary | 6 | 15 |
+| `eu-west-1` | ocp-secondary | 3 | 10 |
+
+Request increases **before** deploying:
+```bash
+aws service-quotas request-service-quota-increase \
+  --service-code ec2 --quota-code L-0263D0A3 \
+  --desired-value 15 --region eu-north-1
+
+aws service-quotas request-service-quota-increase \
+  --service-code ec2 --quota-code L-0263D0A3 \
+  --desired-value 10 --region eu-west-1
+```
+
+### Hub Cluster Sizing Note
+
+The hub cluster runs ACM, ODF Multicluster Orchestrator, Vault, ArgoCD, and Hive. The default 3 workers (`m5.2xlarge`) may not have enough CPU for ODF pods. **Recommendation:** Scale to 6 workers (2 per AZ) before running `./pattern.sh make install`, or monitor and scale if pods are stuck Pending:
+
+```bash
+# Scale each worker MachineSet to 2 replicas
+for ms in $(oc get machineset -n openshift-machine-api -o name | grep worker); do
+  oc scale $ms -n openshift-machine-api --replicas=2
+done
+
+# Wait for new nodes, then label them for ODF
+for node in $(oc get nodes -l node-role.kubernetes.io/worker --no-headers -o name | tail -3); do
+  oc label $node cluster.ocs.openshift.io/openshift-storage=""
+done
+```
 
 ---
 
 ## Reference: Our Deployment Details
 
+### Cluster Inventory
+
+#### Hub Cluster
+
 | Item | Value |
 |---|---|
-| **Hub API** | `https://api.hub.ecoengverticals-qe.devcluster.openshift.com:6443` |
-| **Hub Console** | `https://console-openshift-console.apps.hub.ecoengverticals-qe.devcluster.openshift.com` |
-| **Hub Login** | `kubeadmin` / `KHRWV-2QLNR-gRWfb-WNShV` |
-| **Hub KUBECONFIG** | `~/git/hub-cluster-install/auth/kubeconfig` |
-| **ArgoCD URL** | `https://hub-gitops-server-ramendr-starter-kit-hub.apps.hub.ecoengverticals-qe.devcluster.openshift.com` |
-| **ArgoCD Login** | `admin` / `FqfvVayBz8muXeAgRWMZ4OI2Pk0KD9CY` |
-| **Git Fork** | `https://github.com/ikandel1/ramendr-starter-kit.git` |
-| **Git Branch** | `main` |
-| **Base Domain** | `ecoengverticals-qe.devcluster.openshift.com` |
-| **Primary Region** | `eu-north-1` (Stockholm) |
-| **Secondary Region** | `eu-west-1` (Ireland) |
-| **OCP Version** | 4.18.32 (hub), 4.18.7 (managed clusters) |
+| **Cluster Name** | `hub` |
+| **OCP Version** | 4.18.32 |
+| **AWS Region** | `eu-north-1` (Stockholm) |
 | **Cluster ID** | `5df8d356-4d0e-4455-a1eb-81cc9225d05b` |
+| **API** | `https://api.hub.ecoengverticals-qe.devcluster.openshift.com:6443` |
+| **Console** | `https://console-openshift-console.apps.hub.ecoengverticals-qe.devcluster.openshift.com` |
+| **Login** | `kubeadmin` / `KHRWV-2QLNR-gRWfb-WNShV` |
+| **KUBECONFIG** | `~/git/hub-cluster-install/auth/kubeconfig` (also `~/.kube/config`) |
+| **Install Dir** | `~/git/hub-cluster-install/` |
+| **Nodes** | 3 masters (`m5.4xlarge`) + 6 workers (`m5.2xlarge`) |
+
+#### ocp-primary (Managed)
+
+| Item | Value |
+|---|---|
+| **Cluster Name** | `ocp-primary` |
+| **OCP Version** | 4.18.7 |
+| **AWS Region** | `eu-north-1` (Stockholm) |
+| **InfraID** | `ocp-primary-d85dm` |
+| **Cluster ID** | `1099b67e-462c-40ce-a9eb-59eaca6f9d74` |
+| **API** | `https://api.ocp-primary.ecoengverticals-qe.devcluster.openshift.com:6443` |
+| **Console** | `https://console-openshift-console.apps.ocp-primary.ecoengverticals-qe.devcluster.openshift.com` |
+| **Login** | `kubeadmin` / `bSqje-hbg9N-vR9L6-ymE43` |
+| **Nodes** | 3 masters (`m5.4xlarge`) + 3 workers (`m5.metal`) + 1 Submariner GW (`c5d.large`) |
+
+#### ocp-secondary (Managed)
+
+| Item | Value |
+|---|---|
+| **Cluster Name** | `ocp-secondary` |
+| **OCP Version** | 4.18.7 |
+| **AWS Region** | `eu-west-1` (Ireland) |
+| **InfraID** | `ocp-secondary-5bm82` |
+| **Cluster ID** | `571ba9ba-4a36-49b8-8ea6-bdbeb0bfb1db` |
+| **API** | `https://api.ocp-secondary.ecoengverticals-qe.devcluster.openshift.com:6443` |
+| **Console** | `https://console-openshift-console.apps.ocp-secondary.ecoengverticals-qe.devcluster.openshift.com` |
+| **Login** | `kubeadmin` / `z2rCY-FXZ6r-6fTmu-gZmCI` |
+| **Nodes** | 3 masters (`m5.4xlarge`) + 3 workers (`m5.metal`) + 1 Submariner GW (`c5d.large`) |
+
+### Networking
+
+| Cluster | Service CIDR | Cluster CIDR | Machine CIDR |
+|---|---|---|---|
+| **hub** | `172.30.0.0/16` | `10.128.0.0/14` | `10.0.0.0/16` |
+| **ocp-primary** | `172.20.0.0/16` | `10.132.0.0/14` | `10.1.0.0/16` |
+| **ocp-secondary** | `172.21.0.0/16` | `10.136.0.0/14` | `10.2.0.0/16` |
+
+### Key URLs
+
+| Service | URL |
+|---|---|
+| **ArgoCD (Hub)** | `https://hub-gitops-server-ramendr-starter-kit-hub.apps.hub.ecoengverticals-qe.devcluster.openshift.com` |
+| **ArgoCD Login** | `admin` / `FqfvVayBz8muXeAgRWMZ4OI2Pk0KD9CY` |
+| **Vault** | `https://vault-vault.apps.hub.ecoengverticals-qe.devcluster.openshift.com` |
+
+### Git Repository
+
+| Item | Value |
+|---|---|
+| **Fork** | `https://github.com/ikandel1/ramendr-starter-kit.git` |
+| **Upstream** | `https://github.com/validatedpatterns/ramendr-starter-kit.git` |
+| **Branch** | `main` |
+| **Local Path** | `~/git/ramendr-starter-kit` |
+| **Base Domain** | `ecoengverticals-qe.devcluster.openshift.com` |
+
+### Secrets (loaded into Vault)
+
+| Vault Path | Contents |
+|---|---|
+| `secret/global/vm-ssh` | SSH username (`cloud-user`), private key, public key |
+| `secret/global/cloud-init` | Cloud-init userData |
+| `secret/hub/aws` | AWS credentials, baseDomain, pullSecret, SSH keys |
+| `secret/hub/openshiftPullSecret` | `.dockerconfigjson` |
+| `secret/hub/privatekey` | SSH private key (required by ExternalSecrets for managed clusters) |
+
+### Key Files
+
+| File | Purpose |
+|---|---|
+| `~/.aws/credentials` | AWS Access Key ID + Secret Access Key |
+| `~/values-secret.yaml` | Real secrets file (never commit!) |
+| `~/git/hub-cluster-install/auth/kubeconfig` | Hub cluster kubeconfig |
+| `~/git/hub-cluster-install/auth/kubeadmin-password` | Hub admin password |
+
+### ArgoCD Application Status (Final)
+
+| Application | Sync | Health |
+|---|---|---|
+| `acm` | Synced | Healthy |
+| `odf` | Synced | Healthy |
+| `vault` | Synced | Healthy |
+| `golang-external-secrets` | Synced | Healthy |
+| `ensure-openshift-console-plugins` | Synced | Healthy |
+| `opp-policy` | Synced | Healthy |
+| `regional-dr` | Synced | Healthy |
+
+### Installed Operators
+
+#### Hub Cluster
+
+| Operator | Version |
+|---|---|
+| Validated Patterns Operator | 0.0.65 |
+| OpenShift GitOps (ArgoCD) | 1.18.3 |
+| Advanced Cluster Management | 2.13.5 |
+| ODF Multicluster Orchestrator | 4.18.15 |
+| ODF Operator | 4.18.15 |
+| ODR Hub Operator | 4.18.15 |
+
+#### Managed Clusters (both primary and secondary)
+
+| Operator | Version |
+|---|---|
+| OpenShift Virtualization (KubeVirt) | 4.18.29 |
+| ODF Operator | 4.18.15 |
+| OCS Operator | 4.18.15 |
+| ODR Cluster Operator | 4.18.15 |
+| Submariner | 0.20.2 |
+| OADP Operator | 1.4.7 |
+| External DNS Operator | 1.3.2 |
+| Node Health Check Operator | 0.10.1 |
+| Self Node Remediation | 0.11.0 |
+| OpenShift GitOps | 1.18.3 |
+
+### DR Protection Status
+
+| Component | Status |
+|---|---|
+| **DRPolicy `2m-vm`** | Validated — 2-minute RPO with VM support |
+| **DRPolicy `2m-novm`** | Validated — 2-minute RPO without VM support |
+| **DRClusters** | Both `ocp-primary` and `ocp-secondary` Available |
+| **MirrorPeer** | `ExchangedSecret` — ODF secrets exchanged between clusters |
+| **Submariner** | Healthy — both clusters connected |
+| **ODF StorageCluster** | Ready on both clusters (v4.18.15) |
+| **Volume Replication** | 4 PVCs replicating (Primary state) |
+| **DRPC `gitops-vm-protection`** | Deployed + Protected on `ocp-primary` |
+
+### Virtual Machines on ocp-primary
+
+| VM Name | Namespace | Status | CPU | Memory | IP |
+|---|---|---|---|---|---|
+| `rhel9-node-001` | `gitops-vms` | Running | 1 | 4Gi | `10.132.2.125` |
+| `rhel9-node-002` | `gitops-vms` | Running | 1 | 4Gi | `10.132.2.126` |
+| `rhel9-node-003` | `gitops-vms` | Running | 1 | 4Gi | `10.133.2.72` |
+| `rhel9-node-004` | `gitops-vms` | Running | 1 | 4Gi | `10.133.2.73` |
+
+All 4 VMs are DR-protected with volume replication to ocp-secondary.
+
+---
+
+## Known Issues and Fixes Applied
+
+| Issue | Root Cause | Resolution |
+|---|---|---|
+| `./pattern.sh` used template instead of real secrets | `values-secret.yaml.template` in repo was picked up before `~/values-secret.yaml` | Always pass `VALUES_SECRET=~/values-secret.yaml` explicitly |
+| Pattern's `targetRepo` pointed to upstream instead of fork | Default behavior when cloning upstream first | Patched with `oc patch pattern ... targetRepo` |
+| `openshift-install` ARM64 binary couldn't deploy x86 instances | Apple Silicon Mac downloads ARM64 by default | Downloaded amd64 version of the installer |
+| Hub worker nodes exhausted CPU, ODF pods pending | 3 workers insufficient for ACM + ODF + operators | Scaled hub workers from 3 to 6 via MachineSet |
+| New hub workers missing ODF storage label | Auto-scaling doesn't apply ODF labels | Manually labeled with `cluster.ocs.openshift.io/openshift-storage=""` |
+| ExternalSecrets for SSH private key failed | Pattern expects `secret/hub/privatekey` in Vault, not part of `secret/hub/aws` | Created `secret/hub/privatekey` in Vault explicitly |
+| ocp-primary failed to provision (EIP limit) | AWS default limit is 5 Elastic IPs per region; hub uses 3 | Requested quota increase to 15 via `aws service-quotas` |
+| ocp-secondary marked as failed despite being functional | Install failed only on bootstrap cleanup (SSH rule timeout), cluster was actually running | Patched ClusterDeployment `spec.installed: true` with correct `clusterMetadata` |
+| `regional-dr` ArgoCD sync deadlocked | Prerequisites checker Job blocked sync waves; it needed clusters that were in later waves | Manually created the Job to unblock; once it passed, sync proceeded normally |
+| Submariner CRDs missing (early in deployment) | ACM/ODF hadn't finished deploying when `regional-dr` first tried to sync | Re-synced after operators were installed |
 
