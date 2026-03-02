@@ -9,6 +9,49 @@ This guide documents the full step-by-step deployment of the RamenDR Starter Kit
 
 ---
 
+## New Team Member Quick Start
+
+If you're joining this project, here's what you need to get the full environment running:
+
+1. **Get credentials from your team lead:**
+   - AWS Access Key ID + Secret Access Key (for the shared `automation-user`)
+   - OpenShift Pull Secret (from [console.redhat.com](https://console.redhat.com/openshift/install/pull-secret))
+   - The Route53 Hosted Zone ID and base domain
+
+2. **Install tools on your Mac** (takes ~10 min):
+   ```bash
+   brew install openshift-cli podman awscli git
+   xcode-select --install   # for make
+   podman machine init && podman machine start
+   ```
+   Then install `openshift-install` — see [Step 3 below](#3-install-openshift-install-cli).
+
+3. **Configure AWS** (takes ~2 min):
+   ```bash
+   aws configure   # enter your Access Key, Secret Key, region: eu-north-1, format: json
+   ```
+
+4. **Fork the repo** → [github.com/validatedpatterns/ramendr-starter-kit/fork](https://github.com/validatedpatterns/ramendr-starter-kit/fork)
+
+5. **Clone, configure, and deploy** (takes ~2-3 hours, mostly unattended):
+   ```bash
+   git clone https://github.com/<YOUR_USER>/ramendr-starter-kit.git
+   cd ramendr-starter-kit
+   ```
+   Then follow [Step-by-Step Deployment](#step-by-step-deployment) below, or if a hub `install-config.yaml.bak` already exists at `~/git/hub-cluster-install/`, you can run:
+   ```bash
+   ./redeploy.sh
+   ```
+
+6. **Important gotchas** (read these before deploying!):
+   - Always use `VALUES_SECRET=~/values-secret.yaml` when running `./pattern.sh make install`
+   - Download the **amd64** `openshift-install` binary, even on Apple Silicon Macs
+   - Request AWS EIP quota increase to 15 in your primary region **before** deploying
+   - Hub needs **6 workers** (not 3) — the redeploy script handles this automatically
+   - Clusters on `devcluster.openshift.com` are **auto-destroyed** after a few days — use `./redeploy.sh` to rebuild
+
+---
+
 ## Architecture Overview
 
 The pattern deploys **3 OpenShift clusters** on AWS:
@@ -468,54 +511,19 @@ done
 
 ---
 
-## Reference: Our Deployment Details
+## Reference: Deployment Configuration
 
-### Cluster Inventory
+> **Note:** Cluster IDs, passwords, and IPs change with every deployment. Use the commands below to retrieve current values after each redeploy.
 
-#### Hub Cluster
+### Cluster Layout
 
-| Item | Value |
-|---|---|
-| **Cluster Name** | `hub` |
-| **OCP Version** | 4.18.32 |
-| **AWS Region** | `eu-north-1` (Stockholm) |
-| **Cluster ID** | `5df8d356-4d0e-4455-a1eb-81cc9225d05b` |
-| **API** | `https://api.hub.ecoengverticals-qe.devcluster.openshift.com:6443` |
-| **Console** | `https://console-openshift-console.apps.hub.ecoengverticals-qe.devcluster.openshift.com` |
-| **Login** | `kubeadmin` / `KHRWV-2QLNR-gRWfb-WNShV` |
-| **KUBECONFIG** | `~/git/hub-cluster-install/auth/kubeconfig` (also `~/.kube/config`) |
-| **Install Dir** | `~/git/hub-cluster-install/` |
-| **Nodes** | 3 masters (`m5.4xlarge`) + 6 workers (`m5.2xlarge`) |
+| Cluster | Name | Region | Instance Types | Notes |
+|---|---|---|---|---|
+| Hub | `hub` | `eu-north-1` | 3x `m5.4xlarge` masters, 6x `m5.2xlarge` workers | Runs ACM, ArgoCD, Vault, ODF orchestrator |
+| Primary | `ocp-primary` | `eu-north-1` | 3x `m5.4xlarge` masters, 3x `m5.metal` workers | Runs VMs, primary DR site |
+| Secondary | `ocp-secondary` | `eu-west-1` | 3x `m5.4xlarge` masters, 3x `m5.metal` workers | Secondary DR site (failover target) |
 
-#### ocp-primary (Managed)
-
-| Item | Value |
-|---|---|
-| **Cluster Name** | `ocp-primary` |
-| **OCP Version** | 4.18.7 |
-| **AWS Region** | `eu-north-1` (Stockholm) |
-| **InfraID** | `ocp-primary-d85dm` |
-| **Cluster ID** | `1099b67e-462c-40ce-a9eb-59eaca6f9d74` |
-| **API** | `https://api.ocp-primary.ecoengverticals-qe.devcluster.openshift.com:6443` |
-| **Console** | `https://console-openshift-console.apps.ocp-primary.ecoengverticals-qe.devcluster.openshift.com` |
-| **Login** | `kubeadmin` / `bSqje-hbg9N-vR9L6-ymE43` |
-| **Nodes** | 3 masters (`m5.4xlarge`) + 3 workers (`m5.metal`) + 1 Submariner GW (`c5d.large`) |
-
-#### ocp-secondary (Managed)
-
-| Item | Value |
-|---|---|
-| **Cluster Name** | `ocp-secondary` |
-| **OCP Version** | 4.18.7 |
-| **AWS Region** | `eu-west-1` (Ireland) |
-| **InfraID** | `ocp-secondary-5bm82` |
-| **Cluster ID** | `571ba9ba-4a36-49b8-8ea6-bdbeb0bfb1db` |
-| **API** | `https://api.ocp-secondary.ecoengverticals-qe.devcluster.openshift.com:6443` |
-| **Console** | `https://console-openshift-console.apps.ocp-secondary.ecoengverticals-qe.devcluster.openshift.com` |
-| **Login** | `kubeadmin` / `z2rCY-FXZ6r-6fTmu-gZmCI` |
-| **Nodes** | 3 masters (`m5.4xlarge`) + 3 workers (`m5.metal`) + 1 Submariner GW (`c5d.large`) |
-
-### Networking
+### Networking (configured in `charts/hub/rdr/values.yaml`)
 
 | Cluster | Service CIDR | Cluster CIDR | Machine CIDR |
 |---|---|---|---|
@@ -523,13 +531,32 @@ done
 | **ocp-primary** | `172.20.0.0/16` | `10.132.0.0/14` | `10.1.0.0/16` |
 | **ocp-secondary** | `172.21.0.0/16` | `10.136.0.0/14` | `10.2.0.0/16` |
 
-### Key URLs
+### How to Retrieve Current Credentials
 
-| Service | URL |
-|---|---|
-| **ArgoCD (Hub)** | `https://hub-gitops-server-ramendr-starter-kit-hub.apps.hub.ecoengverticals-qe.devcluster.openshift.com` |
-| **ArgoCD Login** | `admin` / `FqfvVayBz8muXeAgRWMZ4OI2Pk0KD9CY` |
-| **Vault** | `https://vault-vault.apps.hub.ecoengverticals-qe.devcluster.openshift.com` |
+```bash
+# Hub console password
+cat ~/git/hub-cluster-install/auth/kubeadmin-password
+
+# ArgoCD admin password
+oc get secret hub-gitops-cluster -n ramendr-starter-kit-hub \
+  -o jsonpath='{.data.admin\.password}' | base64 -d
+
+# Hub console URL
+echo "https://console-openshift-console.apps.hub.<YOUR_BASE_DOMAIN>"
+
+# ArgoCD URL
+oc get route hub-gitops-server -n ramendr-starter-kit-hub -o jsonpath='https://{.spec.host}'
+
+# Managed cluster kubeadmin passwords
+oc get secret -n ocp-primary $(oc get secrets -n ocp-primary -o name | grep admin-password) \
+  -o jsonpath='{.data.password}' | base64 -d
+
+oc get secret -n ocp-secondary $(oc get secrets -n ocp-secondary -o name | grep admin-password) \
+  -o jsonpath='{.data.password}' | base64 -d
+
+# Quick status check
+./redeploy.sh --status
+```
 
 ### Git Repository
 
@@ -540,6 +567,7 @@ done
 | **Branch** | `main` |
 | **Local Path** | `~/git/ramendr-starter-kit` |
 | **Base Domain** | `ecoengverticals-qe.devcluster.openshift.com` |
+| **Route53 Hosted Zone ID** | `Z01653801KMZNKX9NGW6G` |
 
 ### Secrets (loaded into Vault)
 
@@ -613,16 +641,15 @@ done
 | **Volume Replication** | 4 PVCs replicating (Primary state) |
 | **DRPC `gitops-vm-protection`** | Deployed + Protected on `ocp-primary` |
 
-### Virtual Machines on ocp-primary
+### Virtual Machines
 
-| VM Name | Namespace | Status | CPU | Memory | IP |
-|---|---|---|---|---|---|
-| `rhel9-node-001` | `gitops-vms` | Running | 1 | 4Gi | `10.132.2.125` |
-| `rhel9-node-002` | `gitops-vms` | Running | 1 | 4Gi | `10.132.2.126` |
-| `rhel9-node-003` | `gitops-vms` | Running | 1 | 4Gi | `10.133.2.72` |
-| `rhel9-node-004` | `gitops-vms` | Running | 1 | 4Gi | `10.133.2.73` |
+The pattern deploys 4 RHEL9 VMs on ocp-primary, each with 1 vCPU and 4Gi memory in the `gitops-vms` namespace. All VMs are DR-protected with volume replication to ocp-secondary.
 
-All 4 VMs are DR-protected with volume replication to ocp-secondary.
+```bash
+# Check VM status (run from hub cluster)
+PRIMARY_KC=$(oc get secrets -n ocp-primary -o name | grep admin-kubeconfig | head -1)
+oc get vm -A --kubeconfig <(oc get $PRIMARY_KC -n ocp-primary -o jsonpath='{.data.kubeconfig}' | base64 -d)
+```
 
 ---
 
