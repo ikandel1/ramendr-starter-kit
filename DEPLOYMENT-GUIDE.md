@@ -626,6 +626,90 @@ All 4 VMs are DR-protected with volume replication to ocp-secondary.
 
 ---
 
+## Quick Redeploy (Single Command)
+
+> **Important:** Clusters on `devcluster.openshift.com` are ephemeral and auto-destroyed after a few days. Use this script to redeploy the entire environment.
+
+### Full Redeploy (destroy + rebuild everything)
+
+```bash
+cd ~/git/ramendr-starter-kit
+./redeploy.sh
+```
+
+This single command will:
+1. Clean stale DNS records from Route53
+2. Release orphaned Elastic IPs
+3. Destroy the old hub cluster (if it exists)
+4. Install a fresh hub cluster (~45 min)
+5. Scale hub workers to 6 and label for ODF
+6. Deploy the RamenDR pattern (~20 min for operators)
+7. Wait for managed clusters to provision (~50 min)
+8. Wait for full DR convergence
+9. Print environment status
+
+**Total time: ~2 hours unattended**
+
+### Other Commands
+
+```bash
+# Check current status
+./redeploy.sh --status
+
+# Destroy everything without redeploying
+./redeploy.sh --destroy-only
+
+# Redeploy pattern only (hub already exists)
+./redeploy.sh --pattern-only
+```
+
+### Environment Variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `HUB_INSTALL_DIR` | `~/git/hub-cluster-install` | Hub cluster install directory |
+| `VALUES_SECRET` | `~/values-secret.yaml` | Path to secrets file |
+| `HOSTED_ZONE_ID` | `Z01653801KMZNKX9NGW6G` | Route53 hosted zone ID |
+
+### Manual Step-by-Step (if you prefer)
+
+If you want to run each step manually instead of using the script:
+
+```bash
+# 1. Clean up stale resources
+#    (DNS records, orphaned EIPs)
+
+# 2. Install hub cluster
+cd ~/git/hub-cluster-install
+cp install-config.yaml.bak install-config.yaml
+openshift-install create cluster --dir . --log-level=info
+export KUBECONFIG=~/git/hub-cluster-install/auth/kubeconfig
+cp auth/kubeconfig ~/.kube/config
+
+# 3. Scale hub workers (needed for ODF)
+for ms in $(oc get machinesets.machine.openshift.io -n openshift-machine-api -o name); do
+  oc scale $ms --replicas=2 -n openshift-machine-api
+done
+# Wait for workers, then label for ODF:
+for node in $(oc get nodes -l node-role.kubernetes.io/worker -o name); do
+  oc label $node cluster.ocs.openshift.io/openshift-storage="" --overwrite
+done
+
+# 4. Deploy pattern
+cd ~/git/ramendr-starter-kit
+VALUES_SECRET=~/values-secret.yaml ./pattern.sh make install
+
+# 5. Fix Vault privatekey (if ExternalSecrets fail)
+PRIVKEY=$(oc exec -n vault vault-0 -- vault kv get -field=ssh-privatekey secret/hub/aws)
+PUBKEY=$(oc exec -n vault vault-0 -- vault kv get -field=ssh-publickey secret/hub/aws)
+oc exec -n vault vault-0 -- vault kv put secret/hub/privatekey ssh-privatekey="$PRIVKEY" ssh-publickey="$PUBKEY"
+
+# 6. Monitor convergence
+watch 'oc get applications.argoproj.io -n ramendr-starter-kit-hub -o custom-columns="NAME:.metadata.name,SYNC:.status.sync.status,HEALTH:.status.health.status"'
+```
+
+---
+
 ## Known Issues and Fixes Applied
 
 | Issue | Root Cause | Resolution |
@@ -640,4 +724,6 @@ All 4 VMs are DR-protected with volume replication to ocp-secondary.
 | ocp-secondary marked as failed despite being functional | Install failed only on bootstrap cleanup (SSH rule timeout), cluster was actually running | Patched ClusterDeployment `spec.installed: true` with correct `clusterMetadata` |
 | `regional-dr` ArgoCD sync deadlocked | Prerequisites checker Job blocked sync waves; it needed clusters that were in later waves | Manually created the Job to unblock; once it passed, sync proceeded normally |
 | Submariner CRDs missing (early in deployment) | ACM/ODF hadn't finished deploying when `regional-dr` first tried to sync | Re-synced after operators were installed |
+| NooBaa DB CrashLoopBackOff on secondary | `role "noobaa" does not exist` — DB initialized without noobaa role due to race condition | Delete the PVC `db-noobaa-db-pg-0`, scale StatefulSet to 0/1 to force fresh init |
+| Clusters auto-destroyed after a few days | `devcluster.openshift.com` has automatic TTL cleanup | Use `./redeploy.sh` to rebuild the entire environment |
 
