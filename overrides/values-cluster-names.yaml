@@ -13,7 +13,7 @@ clusterOverrides:
         name: ocp-primary
       platform:
         aws:
-          region: us-west-1
+          region: eu-north-1
   secondary:
     name: ocp-secondary
     version: 4.18.7
@@ -22,7 +22,7 @@ clusterOverrides:
         name: ocp-secondary
       platform:
         aws:
-          region: us-east-1
+          region: eu-west-1
 
 # DRPC overrides (preferredCluster defaults to primary if unset)
 drpc:
