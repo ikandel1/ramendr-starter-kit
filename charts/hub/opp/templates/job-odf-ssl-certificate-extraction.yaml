@@ -31,6 +31,10 @@ spec:
         env:
         - name: KUBECONFIG
           value: ""
+        - name: PRIMARY_CLUSTER
+          value: {{ include "opp.primaryClusterName" . | quote }}
+        - name: SECONDARY_CLUSTER
+          value: {{ include "opp.secondaryClusterName" . | quote }}
       restartPolicy: Never
       serviceAccountName: odf-ssl-extractor-sa
   backoffLimit: 10

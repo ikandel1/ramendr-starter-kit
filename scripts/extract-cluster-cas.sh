@@ -108,18 +108,19 @@ main() {
         ((cluster_index++))
     done
     
-    # For the specific clusters in your configuration (ocp-primary, ocp-secondary)
-    # These would need to be extracted when the clusters are available
+    # For the specific clusters in your configuration (set PRIMARY_CLUSTER/SECONDARY_CLUSTER to match values.yaml)
+    PRIMARY_CLUSTER="${PRIMARY_CLUSTER:-ocp-primary}"
+    SECONDARY_CLUSTER="${SECONDARY_CLUSTER:-ocp-secondary}"
     echo ""
     echo "CA certificate extraction completed."
     echo "Certificates are stored in: $CA_OUTPUT_DIR"
     echo ""
     echo "To extract CAs from your specific clusters, run:"
-    echo "  # For ocp-primary cluster:"
-    echo "  oc --kubeconfig=<primary-kubeconfig> get configmap -n openshift-config-managed trusted-ca-bundle -o jsonpath=\"{.data['ca-bundle\\.crt']}\" > $CA_OUTPUT_DIR/ocp-primary-ca.crt"
+    echo "  # For $PRIMARY_CLUSTER cluster:"
+    echo "  oc --kubeconfig=<primary-kubeconfig> get configmap -n openshift-config-managed trusted-ca-bundle -o jsonpath=\"{.data['ca-bundle\\.crt']}\" > $CA_OUTPUT_DIR/${PRIMARY_CLUSTER}-ca.crt"
     echo ""
-    echo "  # For ocp-secondary cluster:"
-    echo "  oc --kubeconfig=<secondary-kubeconfig> get configmap -n openshift-config-managed trusted-ca-bundle -o jsonpath=\"{.data['ca-bundle\\.crt']}\" > $CA_OUTPUT_DIR/ocp-secondary-ca.crt"
+    echo "  # For $SECONDARY_CLUSTER cluster:"
+    echo "  oc --kubeconfig=<secondary-kubeconfig> get configmap -n openshift-config-managed trusted-ca-bundle -o jsonpath=\"{.data['ca-bundle\\.crt']}\" > $CA_OUTPUT_DIR/${SECONDARY_CLUSTER}-ca.crt"
     echo ""
     echo "Then update your values files with the CA data."
 }

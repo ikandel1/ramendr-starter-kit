@@ -120,12 +120,14 @@ show_usage() {
     echo ""
     echo "Examples:"
     echo "  $0                                    # Download all managed cluster kubeconfigs"
-    echo "  $0 -c ocp-primary                    # Download only ocp-primary kubeconfig"
+    echo "  $0 -c \${PRIMARY_CLUSTER:-ocp-primary}          # Download only primary cluster kubeconfig (set PRIMARY_CLUSTER to match values.yaml)"
     echo "  $0 -o /tmp/kubeconfigs               # Download to /tmp/kubeconfigs directory"
     echo "  $0 --dry-run                         # Show what would be downloaded"
     echo ""
     echo "Environment variables:"
     echo "  KUBECONFIG                           # Kubeconfig for hub cluster (if not using current context)"
+    echo "  PRIMARY_CLUSTER                      # Primary DR cluster name (default: ocp-primary; match values.yaml)"
+    echo "  SECONDARY_CLUSTER                    # Secondary DR cluster name (default: ocp-secondary; match values.yaml)"
 }
 
 # Main function

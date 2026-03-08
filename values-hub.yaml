@@ -12,12 +12,11 @@ clusterGroup:
     - openshift-dr-ops
     - openshift-storage
     - policies
-    # - regional-dr-trigger
   subscriptions:
     acm:
       name: advanced-cluster-management
       namespace: open-cluster-management
-      channel: release-2.13
+      channel: release-2.14
 
     odf-multicluster-orchestrator:
       name: odf-multicluster-orchestrator
@@ -97,6 +96,8 @@ clusterGroup:
           - PrunePropagationPolicy=foreground
           - RespectIgnoreDifferences=true
           - ServerSideApply=true
+      extraValueFiles:
+        - '/overrides/values-cluster-names.yaml'
       ignoreDifferences:
       - group: operators.openshift.io
         kind: Console
@@ -121,6 +122,8 @@ clusterGroup:
             maxDuration: 3m
         syncOptions:
           - RespectIgnoreDifferences=true
+      extraValueFiles:
+        - '/overrides/values-cluster-names.yaml'
       ignoreDifferences:
         # Prevent ArgoCD from pruning dynamically created OCM resources
         # These resources are created by OCM operators and should never be pruned

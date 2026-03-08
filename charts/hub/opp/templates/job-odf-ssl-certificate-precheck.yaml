@@ -30,6 +30,11 @@ spec:
           limits:
             memory: "128Mi"
             cpu: "100m"
+        env:
+        - name: PRIMARY_CLUSTER
+          value: {{ include "opp.primaryClusterName" . | quote }}
+        - name: SECONDARY_CLUSTER
+          value: {{ include "opp.secondaryClusterName" . | quote }}
         command:
         - /bin/bash
         - -c

@@ -1,18 +1,19 @@
-{{- range .Values.regionalDR }}
-{{ $globalnetEnabled := .globalnetEnabled }}
+{{- $dr := index .Values.regionalDR 0 }}
+{{- $clusterSet := $dr.name }}
+{{- $globalnetEnabled := $dr.globalnetEnabled }}
 ---
 apiVersion: v1
 kind: Namespace
 metadata:
   annotations:
     argocd.argoproj.io/sync-wave: "3"
-  name: {{ .name }}-broker
+  name: {{ $clusterSet }}-broker
 ---
 apiVersion: submariner.io/v1alpha1
 kind: Broker
 metadata:
   name: submariner-broker
-  namespace: {{ .name }}-broker
+  namespace: {{ $clusterSet }}-broker
   labels:
     cluster.open-cluster-management.io/backup: submariner
   annotations:
@@ -21,8 +22,10 @@ spec:
   globalnetEnabled: {{ $globalnetEnabled | default false }}
 
 
-{{- range list .clusters.primary .clusters.secondary }}
-{{ $cluster := . }}
+{{- $effectivePrimary := include "rdr.effectivePrimaryCluster" . | fromJson }}
+{{- $effectiveSecondary := include "rdr.effectiveSecondaryCluster" . | fromJson }}
+{{- range list $effectivePrimary $effectiveSecondary }}
+{{- $cluster := . }}
 ---
 apiVersion: addon.open-cluster-management.io/v1alpha1
 kind: ManagedClusterAddOn
@@ -53,5 +56,4 @@ spec:
   credentialsSecret:
     name: {{ $cluster.name }}-cluster-aws-creds
 
-{{- end }}
 {{- end }}

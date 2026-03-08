@@ -60,6 +60,12 @@ spec:
         env:
         - name: KUBECONFIG
           value: ""
+        - name: PRIMARY_CLUSTER
+          value: {{ include "rdr.primaryClusterName" . | quote }}
+        - name: SECONDARY_CLUSTER
+          value: {{ include "rdr.secondaryClusterName" . | quote }}
+        - name: HELM_CHART_VERSION
+          value: {{ index (index .Values "edgeGitopsVms" | default dict) "chartVersion" | default "0.2.10" | quote }}
       volumes:
       - name: values
         configMap:

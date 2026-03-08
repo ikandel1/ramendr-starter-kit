@@ -25,8 +25,9 @@ display_apply_error() {
 echo "Starting Edge GitOps VMs deployment check and deployment..."
 echo "This job will check for existing VMs, Services, Routes, and ExternalSecrets before applying the helm template"
 
-# Configuration
-HELM_CHART_URL="https://github.com/validatedpatterns/helm-charts/releases/download/main/edge-gitops-vms-0.2.10.tgz"
+# Configuration (HELM_CHART_VERSION from values/env, default 0.2.10)
+HELM_CHART_VERSION="${HELM_CHART_VERSION:-0.2.10}"
+HELM_CHART_URL="https://github.com/validatedpatterns/helm-charts/releases/download/main/edge-gitops-vms-${HELM_CHART_VERSION}.tgz"
 WORK_DIR="/tmp/edge-gitops-vms"
 VALUES_FILE="$WORK_DIR/values-egv-dr.yaml"
 VM_NAMESPACE="gitops-vms"
@@ -73,8 +74,8 @@ get_target_cluster_from_placement() {
   
   if [[ -z "$PLACEMENT_DECISION" ]]; then
     echo "  ⚠️  Warning: Could not find PlacementDecision for $PLACEMENT_NAME"
-    echo "  Will default to primary cluster (ocp-primary)"
-    TARGET_CLUSTER="ocp-primary"
+    echo "  Will default to primary cluster (${PRIMARY_CLUSTER:-ocp-primary})"
+    TARGET_CLUSTER="${PRIMARY_CLUSTER:-ocp-primary}"
     return 1
   fi
   
@@ -84,8 +85,8 @@ get_target_cluster_from_placement() {
   
   if [[ -z "$TARGET_CLUSTER" ]]; then
     echo "  ⚠️  Warning: Could not determine target cluster from PlacementDecision"
-    echo "  Will default to primary cluster (ocp-primary)"
-    TARGET_CLUSTER="ocp-primary"
+    echo "  Will default to primary cluster (${PRIMARY_CLUSTER:-ocp-primary})"
+    TARGET_CLUSTER="${PRIMARY_CLUSTER:-ocp-primary}"
     return 1
   fi
   
@@ -93,51 +94,77 @@ get_target_cluster_from_placement() {
   return 0
 }
 
-# Function to get kubeconfig for target managed cluster
+# Function to get kubeconfig for target managed cluster (run from hub; secrets are in hub namespace <cluster>)
 get_target_cluster_kubeconfig() {
   local cluster="$1"
-  echo "Getting kubeconfig for target managed cluster: $cluster"
+  echo "Getting kubeconfig for target managed cluster: $cluster (from hub cluster)"
   
-  # Try to get kubeconfig from secret
-  if oc get secret -n "$cluster" -o name | grep -E "(admin-kubeconfig|kubeconfig)" | head -1 | \
-     xargs -I {} oc get {} -n "$cluster" -o jsonpath='{.data.kubeconfig}' | \
-     base64 -d > "$WORK_DIR/target-kubeconfig.yaml" 2>/dev/null; then
-    echo "  ✅ Retrieved kubeconfig for $cluster"
+  # Try known secret names used by ACM for managed cluster kubeconfig
+  local secret_names=("${cluster}-admin-kubeconfig" "admin-kubeconfig" "import-kubeconfig")
+  local got_kubeconfig=false
+  
+  for secret_name in "${secret_names[@]}"; do
+    if oc get secret "$secret_name" -n "$cluster" -o jsonpath='{.data.kubeconfig}' 2>/dev/null | \
+       base64 -d > "$WORK_DIR/target-kubeconfig.yaml" 2>/dev/null && [[ -s "$WORK_DIR/target-kubeconfig.yaml" ]]; then
+      got_kubeconfig=true
+      echo "  ✅ Retrieved kubeconfig from secret $secret_name (namespace $cluster)"
+      break
+    fi
+  done
+  
+  if [[ "$got_kubeconfig" != "true" ]]; then
+    # Fallback: any secret in namespace $cluster with kubeconfig data
+    if oc get secret -n "$cluster" -o name | grep -E "(admin-kubeconfig|kubeconfig)" | head -1 | \
+       xargs -I {} oc get {} -n "$cluster" -o jsonpath='{.data.kubeconfig}' | \
+       base64 -d > "$WORK_DIR/target-kubeconfig.yaml" 2>/dev/null && [[ -s "$WORK_DIR/target-kubeconfig.yaml" ]]; then
+      got_kubeconfig=true
+      echo "  ✅ Retrieved kubeconfig for $cluster"
+    fi
+  fi
+  
+  if [[ "$got_kubeconfig" == "true" ]]; then
     export KUBECONFIG="$WORK_DIR/target-kubeconfig.yaml"
-    
-    # Verify we can connect to the target cluster
     if oc get nodes &>/dev/null; then
       echo "  ✅ Successfully connected to target managed cluster: $cluster"
       return 0
-    else
-      echo "  ⚠️  Warning: Could not verify connection to target cluster"
-      return 1
     fi
-  else
-    echo "  ⚠️  Could not get kubeconfig for $cluster"
-    echo "  Will use current context (assuming we're already on the target cluster)"
+    echo "  ⚠️  Warning: Kubeconfig retrieved but could not verify connection to $cluster"
     return 1
   fi
+  
+  echo "  ⚠️  Could not get kubeconfig for $cluster"
+  return 1
 }
 
+# Primary/secondary cluster names (from regionalDR via env when run by the rdr chart Job)
+PRIMARY_CLUSTER="${PRIMARY_CLUSTER:-ocp-primary}"
+SECONDARY_CLUSTER="${SECONDARY_CLUSTER:-ocp-secondary}"
+
 # Get target cluster from Placement resource
-TARGET_CLUSTER="ocp-primary"  # Default to primary
+TARGET_CLUSTER="$PRIMARY_CLUSTER"  # Default to primary
 if get_target_cluster_from_placement; then
   echo "  Target cluster: $TARGET_CLUSTER"
 else
   echo "  Using default target cluster: $TARGET_CLUSTER"
 fi
 
-# Get kubeconfig for target cluster
+# Get kubeconfig for target cluster (must succeed so we do not deploy to hub by mistake)
 if ! get_target_cluster_kubeconfig "$TARGET_CLUSTER"; then
-  echo "  ⚠️  Warning: Could not get kubeconfig for target cluster"
-  echo "  Continuing with current context..."
+  echo "  ❌ Error: Could not get kubeconfig for target cluster $TARGET_CLUSTER"
+  echo "  Deployment must run against the primary/target cluster, not the hub."
+  echo "  Ensure the hub can read the kubeconfig secret for $TARGET_CLUSTER (e.g. admin-kubeconfig in namespace $TARGET_CLUSTER)."
+  exit 1
 fi
 
-# Check if we're on the right cluster
+# Verify we're on the target cluster, not the hub
 CURRENT_CLUSTER=$(oc config view --minify -o jsonpath='{.contexts[0].context.cluster}' 2>/dev/null || echo "")
 echo "Current cluster context: $CURRENT_CLUSTER"
 echo "Target cluster for deployment: $TARGET_CLUSTER"
+# Refuse if we're still on hub (in-cluster or local-cluster context)
+if [[ "$CURRENT_CLUSTER" == "in-cluster" || "$CURRENT_CLUSTER" == "local-cluster" ]]; then
+  echo "  ❌ Error: Current context is the hub (${CURRENT_CLUSTER}), not target $TARGET_CLUSTER. Refusing to deploy."
+  exit 1
+fi
 
 # Ensure the gitops-vms namespace exists on the target cluster
 echo ""
@@ -495,16 +522,14 @@ else
   echo ""
   echo "  Applying template to namespace: $VM_NAMESPACE..."
   
-  # Verify we're using the correct kubeconfig (target cluster)
-  if [[ -n "${KUBECONFIG:-}" && -f "$KUBECONFIG" ]]; then
-    CURRENT_CLUSTER=$(oc config view --minify -o jsonpath='{.contexts[0].context.cluster}' 2>/dev/null || echo "")
-    echo "  Using kubeconfig: $KUBECONFIG"
-    echo "  Current cluster context: $CURRENT_CLUSTER"
-    echo "  Target cluster: $TARGET_CLUSTER"
-  else
-    echo "  ⚠️  Warning: KUBECONFIG not set or file not found, using default context"
-    echo "  This may apply to the wrong cluster!"
+  # Require that we are using the target cluster's kubeconfig (never apply to hub)
+  if [[ "${KUBECONFIG:-}" != "$WORK_DIR/target-kubeconfig.yaml" || ! -f "$WORK_DIR/target-kubeconfig.yaml" ]]; then
+    echo "  ❌ Error: KUBECONFIG must point to target cluster ($TARGET_CLUSTER). Refusing to apply to avoid deploying to hub."
+    exit 1
   fi
+  CURRENT_CLUSTER=$(oc config view --minify -o jsonpath='{.contexts[0].context.cluster}' 2>/dev/null || echo "")
+  echo "  Using kubeconfig: $KUBECONFIG (target: $TARGET_CLUSTER)"
+  echo "  Current cluster context: $CURRENT_CLUSTER"
   
   # Now apply the template and capture both stdout, stderr, and exit code
   # The oc apply will use the KUBECONFIG set earlier (target cluster's kubeconfig)

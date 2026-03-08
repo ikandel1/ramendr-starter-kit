@@ -164,7 +164,7 @@ if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
     echo "Examples:"
     echo "  $0 status                    # Check current status"
     echo "  $0 add /path/to/ca.crt      # Add CA from file"
-    echo "  $0 extract ocp-primary      # Extract CA from managed cluster"
+    echo "  $0 extract \${PRIMARY_CLUSTER:-ocp-primary}  # Extract CA from primary managed cluster (set PRIMARY_CLUSTER to match values.yaml)"
     echo "  $0 update-all               # Update with all managed cluster CAs"
     exit 0
 fi

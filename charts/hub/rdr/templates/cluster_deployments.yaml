@@ -1,7 +1,14 @@
-{{- range .Values.regionalDR }}
-{{ $clusterSet := .name }}
-{{- range list .clusters.primary .clusters.secondary }}
-{{ $cluster := . }}
+{{- $dr := index .Values.regionalDR 0 }}
+{{- $clusterSet := $dr.name }}
+{{- $co := .Values.clusterOverrides | default dict -}}
+{{- $ctx := dict "Values" .Values "Files" .Files "primaryOverrideInstallConfig" (index (index $co "primary" | default dict) "install_config" | default dict) "secondaryOverrideInstallConfig" (index (index $co "secondary" | default dict) "install_config" | default dict) }}
+{{- $effectivePrimary := include "rdr.effectivePrimaryCluster" $ctx | fromJson }}
+{{- $effectiveSecondary := include "rdr.effectiveSecondaryCluster" $ctx | fromJson }}
+{{- $defaultBaseDomain := join "." (slice (splitList "." (.Values.global.clusterDomain | default "cluster.example.com")) 1) }}
+{{- range list $effectivePrimary $effectiveSecondary }}
+{{- $cluster := . }}
+{{- $baseDomainRaw := index $cluster.install_config "baseDomain" }}
+{{- $baseDomainStr := default $defaultBaseDomain (and (kindIs "string" $baseDomainRaw) $baseDomainRaw) }}
 ---
 apiVersion: v1
 kind: Namespace
@@ -104,7 +111,7 @@ data:
   install-config.yaml: {{ tpl $install_config $ | b64enc }}
 
 ---
-{{- $domainLabels := splitList "." (tpl $cluster.install_config.baseDomain $) }}
+{{- $domainLabels := splitList "." (tpl $baseDomainStr $) }}
 {{- $baseDomain := join "." (slice $domainLabels 1) }}
 apiVersion: hive.openshift.io/v1
 kind: ClusterDeployment
@@ -115,6 +122,7 @@ metadata:
     purpose: regionalDR
     vendor: OpenShift
     cluster.open-cluster-management.io/clusterset: {{ $clusterSet }}
+    clusterGroup: {{ $cluster.clusterGroup | default $clusterSet }}
   annotations:
     argocd.argoproj.io/sync-wave: "1"
 spec:
@@ -146,7 +154,7 @@ metadata:
     name: {{ $cluster.name }}
     vendor: OpenShift
     cluster.open-cluster-management.io/clusterset: {{ $clusterSet }}
-    clusterGroup: {{ $cluster.clusterGroup }}
+    clusterGroup: {{ $cluster.clusterGroup | default $clusterSet }}
     purpose: regionalDR
   name: {{ $cluster.name }}
   annotations:
@@ -167,6 +175,9 @@ spec:
   clusterNamespace: {{ $cluster.name }}
   clusterLabels:
     vendor: OpenShift
+    cluster.open-cluster-management.io/clusterset: {{ $clusterSet }}
+    purpose: regionalDR
+    clusterGroup: {{ $cluster.clusterGroup | default $clusterSet }}
   applicationManager:
     enabled: true
   policyController:
@@ -177,5 +188,4 @@ spec:
     enabled: true
   iamPolicyController:
     enabled: true
-{{- end }}
 {{- end }}

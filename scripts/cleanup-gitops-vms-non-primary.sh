@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Script to manually cleanup gitops-vms namespace on the non-primary cluster
 # This script will:
-# 1. Determine the non-primary cluster (ocp-secondary by default)
+# 1. Determine the non-primary cluster (discovered from DR policy; override with PRIMARY_CLUSTER/SECONDARY_CLUSTER env if needed)
 # 2. Render the helm template with the same chart version and values
 # 3. Extract resource kinds and names
 # 4. Delete them from the gitops-vms namespace

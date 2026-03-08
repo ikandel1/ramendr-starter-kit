@@ -3,10 +3,10 @@ set -euo pipefail
 
 echo "Starting ODF DR prerequisites check..."
 
-# Configuration
+# Configuration (PRIMARY_CLUSTER and SECONDARY_CLUSTER from values.yaml via env)
 HUB_CLUSTER="local-cluster"
-PRIMARY_CLUSTER="ocp-primary"
-SECONDARY_CLUSTER="ocp-secondary"
+PRIMARY_CLUSTER="${PRIMARY_CLUSTER:-ocp-primary}"
+SECONDARY_CLUSTER="${SECONDARY_CLUSTER:-ocp-secondary}"
 KUBECONFIG_DIR="/tmp/kubeconfigs"
 MAX_ATTEMPTS=120  # 2 hours with 1 minute intervals
 SLEEP_INTERVAL=60  # 1 minute between checks
@@ -306,35 +306,35 @@ check_ca_material_completeness() {
     return 1
   fi
   
-  # Look for primary cluster certificates
-  if [[ "$hub_ca_bundle" != *"# CA from ocp-primary-ca"* ]]; then
-    echo "Hub cluster CA bundle missing ocp-primary-ca certificate"
+  # Look for primary cluster certificates (marker from odf-ssl-certificate-extraction.sh)
+  if [[ "$hub_ca_bundle" != *"# CA from ${PRIMARY_CLUSTER}-ca"* ]]; then
+    echo "Hub cluster CA bundle missing ${PRIMARY_CLUSTER}-ca certificate"
     return 1
   fi
   
-  if [[ "$primary_ca_bundle" != *"# CA from ocp-primary-ca"* ]]; then
-    echo "Primary cluster CA bundle missing ocp-primary-ca certificate"
+  if [[ "$primary_ca_bundle" != *"# CA from ${PRIMARY_CLUSTER}-ca"* ]]; then
+    echo "Primary cluster CA bundle missing ${PRIMARY_CLUSTER}-ca certificate"
     return 1
   fi
   
-  if [[ "$secondary_ca_bundle" != *"# CA from ocp-primary-ca"* ]]; then
-    echo "Secondary cluster CA bundle missing ocp-primary-ca certificate"
+  if [[ "$secondary_ca_bundle" != *"# CA from ${PRIMARY_CLUSTER}-ca"* ]]; then
+    echo "Secondary cluster CA bundle missing ${PRIMARY_CLUSTER}-ca certificate"
     return 1
   fi
   
   # Look for secondary cluster certificates
-  if [[ "$hub_ca_bundle" != *"# CA from ocp-secondary-ca"* ]]; then
-    echo "Hub cluster CA bundle missing ocp-secondary-ca certificate"
+  if [[ "$hub_ca_bundle" != *"# CA from ${SECONDARY_CLUSTER}-ca"* ]]; then
+    echo "Hub cluster CA bundle missing ${SECONDARY_CLUSTER}-ca certificate"
     return 1
   fi
   
-  if [[ "$primary_ca_bundle" != *"# CA from ocp-secondary-ca"* ]]; then
-    echo "Primary cluster CA bundle missing ocp-secondary-ca certificate"
+  if [[ "$primary_ca_bundle" != *"# CA from ${SECONDARY_CLUSTER}-ca"* ]]; then
+    echo "Primary cluster CA bundle missing ${SECONDARY_CLUSTER}-ca certificate"
     return 1
   fi
   
-  if [[ "$secondary_ca_bundle" != *"# CA from ocp-secondary-ca"* ]]; then
-    echo "Secondary cluster CA bundle missing ocp-secondary-ca certificate"
+  if [[ "$secondary_ca_bundle" != *"# CA from ${SECONDARY_CLUSTER}-ca"* ]]; then
+    echo "Secondary cluster CA bundle missing ${SECONDARY_CLUSTER}-ca certificate"
     return 1
   fi
   

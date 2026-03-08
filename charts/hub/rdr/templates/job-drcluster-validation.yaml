@@ -34,9 +34,9 @@ spec:
           
           echo "Starting DRCluster validation check..."
           
-          # Configuration
-          PRIMARY_CLUSTER="{{ $clusters.primary.name }}"
-          SECONDARY_CLUSTER="{{ $clusters.secondary.name }}"
+          # Configuration (clusterOverrides or regionalDR)
+          PRIMARY_CLUSTER="{{ include "rdr.primaryClusterName" $ }}"
+          SECONDARY_CLUSTER="{{ include "rdr.secondaryClusterName" $ }}"
           DRPOLICY_NAME="{{ $name }}"
           MAX_ATTEMPTS=120  # 2 hours with 1 minute intervals
           SLEEP_INTERVAL=60  # 1 minute between checks
@@ -105,10 +105,20 @@ spec:
           done
           
           echo "❌ DRCluster validation check failed after $MAX_ATTEMPTS attempts"
-          echo "Please ensure:"
+          echo ""
+          echo "If the message was 'DRClusterConfig is not applied to cluster':"
+          echo "  Ramen has not yet applied the DR config to that managed cluster (e.g. via ManifestWork)."
+          echo "  - Ensure the ODF/Ramen DR operator is installed on the hub and DRPolicy/DRCluster exist."
+          echo "  - Ensure both clusters are joined (ManagedCluster) and available (hub can reach them)."
+          echo "  - On the hub, check ManifestWorks in each cluster namespace for Ramen/DRClusterConfig:"
+          echo "    oc get manifestwork -n $PRIMARY_CLUSTER"
+          echo "    oc get manifestwork -n $SECONDARY_CLUSTER"
+          echo "  - Check Ramen controller logs on the hub if ManifestWorks are missing or failing."
+          echo ""
+          echo "General checks:"
           echo "1. DRPolicy $DRPOLICY_NAME is created and properly configured"
           echo "2. Both clusters ($PRIMARY_CLUSTER and $SECONDARY_CLUSTER) are available and joined"
-          echo "3. DR operator is installed and running on both clusters"
+          echo "3. DR operator (Ramen/ODF) is installed and running on the hub and on both clusters"
           echo "4. ODF is properly configured on both clusters"
           echo ""
           echo "Current DRCluster status:"

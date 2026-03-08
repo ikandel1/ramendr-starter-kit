@@ -16,8 +16,8 @@ metadata:
     cluster.open-cluster-management.io/backup: ramen
 spec:
   drClusters:
-  - {{ $clusters.primary.name }}
-  - {{ $clusters.secondary.name }}
+  - {{ include "rdr.primaryClusterName" $ }}
+  - {{ include "rdr.secondaryClusterName" $ }}
   schedulingInterval: {{ .interval }}
 {{- if .vmSupport }}
   replicationClassSelector:

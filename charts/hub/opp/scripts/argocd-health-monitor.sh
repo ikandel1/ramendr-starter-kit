@@ -1,12 +1,26 @@
 #!/bin/bash
+# ArgoCD health monitor - Job (one-shot, long-running).
+# Why two scripts? This Job runs once at deploy time (sync-wave 0), retries for up to ~90 min until both
+# primary and secondary Argo CD instances are healthy, then exits. The CronJob (argocd-health-monitor-cron.sh)
+# runs every 15 min to catch wedged clusters after deploy. Both use the same remediation: force-sync the
+# specific resource (Namespace ramendr-starter-kit-resilient) in Application ramendr-starter-kit-resilient.
 set -euo pipefail
 
 echo "Starting ArgoCD health monitoring and remediation..."
+
+# Primary and secondary managed cluster names (from values.yaml via env)
+PRIMARY_CLUSTER="${PRIMARY_CLUSTER:-ocp-primary}"
+SECONDARY_CLUSTER="${SECONDARY_CLUSTER:-ocp-secondary}"
 
 # Configuration
 MAX_ATTEMPTS=180  # Check 180 times (90 minutes with 30s intervals) before failing
 SLEEP_INTERVAL=30
 ARGOCD_NAMESPACE="openshift-gitops"
+# Same as cron: force-sync this specific resource in this Application when remediating (parameterized)
+FORCE_SYNC_APP_NAMESPACE="${FORCE_SYNC_APP_NAMESPACE:-openshift-gitops}"
+FORCE_SYNC_APP_NAME="${FORCE_SYNC_APP_NAME:-ramendr-starter-kit-resilient}"
+FORCE_SYNC_RESOURCE_KIND="${FORCE_SYNC_RESOURCE_KIND:-Namespace}"
+FORCE_SYNC_RESOURCE_NAME="${FORCE_SYNC_RESOURCE_NAME:-ramendr-starter-kit-resilient}"
 HEALTH_CHECK_TIMEOUT=60
 
 # Function to check if a cluster is wedged
@@ -26,11 +40,11 @@ check_cluster_wedged() {
   local cluster_argocd_namespace=""
   local cluster_argocd_instance=""
   case "$cluster" in
-    "ocp-primary")
+    "$PRIMARY_CLUSTER")
       cluster_argocd_namespace="ramendr-starter-kit-resilient"
       cluster_argocd_instance="resilient-gitops-server"
       ;;
-    "ocp-secondary")
+    "$SECONDARY_CLUSTER")
       cluster_argocd_namespace="ramendr-starter-kit-resilient"
       cluster_argocd_instance="resilient-gitops-server"
       ;;
@@ -61,7 +75,12 @@ check_cluster_wedged() {
         return 0
       fi
     fi
-    
+
+    # For primary/secondary we require the cluster-specific Argo CD instance; missing = not healthy (job must not succeed)
+    if [[ "$cluster" == "$PRIMARY_CLUSTER" || "$cluster" == "$SECONDARY_CLUSTER" ]]; then
+      echo "❌ Required Argo CD instance ($cluster_argocd_instance in $cluster_argocd_namespace) not found on $cluster - job will retry or fail"
+      return 0
+    fi
     echo "✅ $cluster appears healthy (no ArgoCD instances installed yet)"
     return 1
   fi
@@ -135,7 +154,12 @@ check_cluster_wedged() {
         fi
       fi
     fi
-    
+
+    # For primary/secondary we require the Argo CD instance to be running; missing = not healthy (job must not succeed)
+    if [[ "$cluster" == "$PRIMARY_CLUSTER" || "$cluster" == "$SECONDARY_CLUSTER" ]]; then
+      echo "❌ Required Argo CD instance ($cluster_argocd_instance) not running in $cluster_argocd_namespace on $cluster - job will retry or fail"
+      return 0
+    fi
     echo "✅ $cluster appears healthy (no ArgoCD instances running yet)"
     return 1
   elif [[ $cluster_argocd_pods -eq 1 ]]; then
@@ -170,240 +194,20 @@ check_cluster_wedged() {
   fi
 }
 
-# Function to remediate a wedged cluster using ArgoCD sync mechanisms
+# Function to remediate a wedged cluster (force sync the specific resource in the specific Application, same as cron)
 remediate_wedged_cluster() {
   local cluster="$1"
   local kubeconfig="$2"
   
-  echo "🔧 Remediating wedged cluster: $cluster using ArgoCD sync mechanisms"
-  echo "  🎯 Focus: Force sync namespace policies and specific resources in stuck applications"
+  echo "🔧 Remediating wedged cluster: $cluster (forcibly resyncing resource $FORCE_SYNC_RESOURCE_KIND/$FORCE_SYNC_RESOURCE_NAME in Application $FORCE_SYNC_APP_NAME)"
   
-  # STEP 1: Find and sync namespace policies
-  echo "  🔍 STEP 1: Finding and syncing namespace policies..."
-  
-  # Get all ArgoCD applications
-  local applications=$(oc --kubeconfig="$kubeconfig" get applications -n "$ARGOCD_NAMESPACE" -o jsonpath='{.items[*].metadata.name}' 2>/dev/null || echo "")
-  
-  if [[ -n "$applications" ]]; then
-    echo "  Found ArgoCD applications: $applications"
-    
-    for app in $applications; do
-      echo "  🔄 Processing application: $app"
-      
-      # Get application status
-      local app_status=$(oc --kubeconfig="$kubeconfig" get application "$app" -n "$ARGOCD_NAMESPACE" -o jsonpath='{.status.sync.status}' 2>/dev/null || echo "Unknown")
-      local app_health=$(oc --kubeconfig="$kubeconfig" get application "$app" -n "$ARGOCD_NAMESPACE" -o jsonpath='{.status.health.status}' 2>/dev/null || echo "Unknown")
-      
-      echo "    Application $app status: sync=$app_status, health=$app_health"
-      
-      # If application is out of sync or unhealthy, force sync it
-      if [[ "$app_status" != "Synced" || "$app_health" != "Healthy" ]]; then
-        echo "    🔄 Application $app is not in sync - forcing sync..."
-        
-        # Force sync the application
-        oc --kubeconfig="$kubeconfig" patch application "$app" -n "$ARGOCD_NAMESPACE" --type=merge -p='{"operation":{"sync":{"syncOptions":["CreateNamespace=true","PrunePropagationPolicy=foreground","PruneLast=true"]}}}' &>/dev/null || true
-        
-        # Wait a moment for sync to start
-        sleep 5
-        
-        # Check if there are specific resources that need to be synced
-        echo "    🔍 Checking for specific resources that need sync in $app..."
-        
-        # Get resources that are out of sync
-        local out_of_sync_resources=$(oc --kubeconfig="$kubeconfig" get application "$app" -n "$ARGOCD_NAMESPACE" -o jsonpath='{.status.resources[?(@.status=="OutOfSync")].name}' 2>/dev/null || echo "")
-        
-        if [[ -n "$out_of_sync_resources" ]]; then
-          echo "    📋 Found out-of-sync resources: $out_of_sync_resources"
-          
-          # Force sync specific resources
-          for resource in $out_of_sync_resources; do
-            echo "    🔄 Force syncing resource: $resource"
-            oc --kubeconfig="$kubeconfig" patch application "$app" -n "$ARGOCD_NAMESPACE" --type=merge -p="{\"operation\":{\"sync\":{\"resources\":[{\"kind\":\"$(echo $resource | cut -d'/' -f1)\",\"name\":\"$(echo $resource | cut -d'/' -f2)\"}]}}}" &>/dev/null || true
-          done
-        fi
-        
-        # Check for namespace policies specifically
-        echo "    🔍 Looking for namespace policies in $app..."
-        local namespace_policies=$(oc --kubeconfig="$kubeconfig" get application "$app" -n "$ARGOCD_NAMESPACE" -o jsonpath='{.status.resources[?(@.kind=="Policy")].name}' 2>/dev/null || echo "")
-        
-        if [[ -n "$namespace_policies" ]]; then
-          echo "    📋 Found namespace policies: $namespace_policies"
-          
-          # Force sync namespace policies
-          for policy in $namespace_policies; do
-            echo "    🔄 Force syncing namespace policy: $policy"
-            oc --kubeconfig="$kubeconfig" patch application "$app" -n "$ARGOCD_NAMESPACE" --type=merge -p="{\"operation\":{\"sync\":{\"resources\":[{\"kind\":\"Policy\",\"name\":\"$policy\"}]}}}" &>/dev/null || true
-          done
-        fi
-      else
-        echo "    ✅ Application $app is already in sync and healthy"
-      fi
-    done
+  if oc --kubeconfig="$kubeconfig" get application "$FORCE_SYNC_APP_NAME" -n "$FORCE_SYNC_APP_NAMESPACE" &>/dev/null; then
+    echo "  Force syncing resource $FORCE_SYNC_RESOURCE_KIND/$FORCE_SYNC_RESOURCE_NAME in Application $FORCE_SYNC_APP_NAME (namespace $FORCE_SYNC_APP_NAMESPACE) on $cluster..."
+    oc --kubeconfig="$kubeconfig" patch application "$FORCE_SYNC_APP_NAME" -n "$FORCE_SYNC_APP_NAMESPACE" --type=merge -p="{\"operation\":{\"sync\":{\"resources\":[{\"kind\":\"$FORCE_SYNC_RESOURCE_KIND\",\"name\":\"$FORCE_SYNC_RESOURCE_NAME\"}],\"syncOptions\":[\"Force=true\"]}}}" &>/dev/null || true
+    echo "  ✅ Triggered force sync for $FORCE_SYNC_RESOURCE_KIND/$FORCE_SYNC_RESOURCE_NAME"
   else
-    echo "  ⚠️  No ArgoCD applications found in $ARGOCD_NAMESPACE namespace"
+    echo "  ⚠️  Application $FORCE_SYNC_APP_NAME not found in $FORCE_SYNC_APP_NAMESPACE on $cluster - cannot force sync"
   fi
-  
-  # STEP 2: Force refresh and hard refresh of applications
-  echo "  🔄 STEP 2: Force refreshing applications..."
-  
-  for app in $applications; do
-    echo "  🔄 Force refreshing application: $app"
-    
-    # Force refresh the application
-    oc --kubeconfig="$kubeconfig" patch application "$app" -n "$ARGOCD_NAMESPACE" --type=merge -p='{"operation":{"initiatedBy":{"username":"argocd-health-monitor"},"info":[{"name":"refresh","value":"hard"}]}}' &>/dev/null || true
-    
-    # Wait for refresh to complete
-    sleep 10
-    
-    # Check application status after refresh
-    local app_status=$(oc --kubeconfig="$kubeconfig" get application "$app" -n "$ARGOCD_NAMESPACE" -o jsonpath='{.status.sync.status}' 2>/dev/null || echo "Unknown")
-    local app_health=$(oc --kubeconfig="$kubeconfig" get application "$app" -n "$ARGOCD_NAMESPACE" -o jsonpath='{.status.health.status}' 2>/dev/null || echo "Unknown")
-    
-    echo "    Application $app status after refresh: sync=$app_status, health=$app_health"
-  done
-  
-  # STEP 3: Check for stuck applications and force sync them
-  echo "  🔍 STEP 3: Checking for stuck applications..."
-  
-  for app in $applications; do
-    local app_status=$(oc --kubeconfig="$kubeconfig" get application "$app" -n "$ARGOCD_NAMESPACE" -o jsonpath='{.status.sync.status}' 2>/dev/null || echo "Unknown")
-    local app_health=$(oc --kubeconfig="$kubeconfig" get application "$app" -n "$ARGOCD_NAMESPACE" -o jsonpath='{.status.health.status}' 2>/dev/null || echo "Unknown")
-    
-    if [[ "$app_status" != "Synced" || "$app_health" != "Healthy" ]]; then
-      echo "  🔄 Application $app is still stuck - attempting final sync..."
-      
-      # Final attempt to sync the application
-      oc --kubeconfig="$kubeconfig" patch application "$app" -n "$ARGOCD_NAMESPACE" --type=merge -p='{"operation":{"sync":{"syncOptions":["CreateNamespace=true","PrunePropagationPolicy=foreground","PruneLast=true","Force=true"]}}}' &>/dev/null || true
-      
-      # Wait for sync to complete
-      sleep 15
-      
-      # Check final status
-      local final_status=$(oc --kubeconfig="$kubeconfig" get application "$app" -n "$ARGOCD_NAMESPACE" -o jsonpath='{.status.sync.status}' 2>/dev/null || echo "Unknown")
-      local final_health=$(oc --kubeconfig="$kubeconfig" get application "$app" -n "$ARGOCD_NAMESPACE" -o jsonpath='{.status.health.status}' 2>/dev/null || echo "Unknown")
-      
-      echo "    Final status for $app: sync=$final_status, health=$final_health"
-    fi
-  done
-  
-  echo "  ✅ ArgoCD sync-based remediation completed for $cluster"
-  echo "  🎯 Remediated: Used ArgoCD sync mechanisms to force sync stuck applications and namespace policies"
-  echo "  ⚠️  Note: This approach preserves existing resources while forcing proper synchronization"
-}
-
-# Function to apply aggressive ArgoCD sync for wedged openshift-gitops namespace
-apply_aggressive_argocd_sync() {
-  local cluster="$1"
-  local kubeconfig="$2"
-  
-  echo "🔄🔄🔄 APPLYING AGGRESSIVE ARGOCD SYNC TO OPENSHIFT-GITOPS NAMESPACE 🔄🔄🔄"
-  echo "  🎯 Target: $ARGOCD_NAMESPACE namespace on $cluster"
-  echo "  ⚠️  This will force sync all applications and namespace policies using ArgoCD mechanisms"
-  
-  # Check if openshift-gitops namespace exists
-  if ! oc --kubeconfig="$kubeconfig" get namespace "$ARGOCD_NAMESPACE" &>/dev/null; then
-    echo "  ✅ $ARGOCD_NAMESPACE namespace does not exist - nothing to sync"
-    return 0
-  fi
-  
-  echo "  🔍 $ARGOCD_NAMESPACE namespace exists - proceeding with aggressive ArgoCD sync"
-  
-  # STEP 1: Get all ArgoCD applications
-  echo "  🔍 STEP 1: Finding all ArgoCD applications..."
-  local applications=$(oc --kubeconfig="$kubeconfig" get applications -n "$ARGOCD_NAMESPACE" -o jsonpath='{.items[*].metadata.name}' 2>/dev/null || echo "")
-  
-  if [[ -z "$applications" ]]; then
-    echo "  ⚠️  No ArgoCD applications found in $ARGOCD_NAMESPACE namespace"
-    return 0
-  fi
-  
-  echo "  Found ArgoCD applications: $applications"
-  
-  # STEP 2: Force sync all applications with aggressive options
-  echo "  🔄 STEP 2: Force syncing all applications with aggressive options..."
-  
-  for app in $applications; do
-    echo "  🔄 Aggressively syncing application: $app"
-    
-    # Get current application status
-    local app_status=$(oc --kubeconfig="$kubeconfig" get application "$app" -n "$ARGOCD_NAMESPACE" -o jsonpath='{.status.sync.status}' 2>/dev/null || echo "Unknown")
-    local app_health=$(oc --kubeconfig="$kubeconfig" get application "$app" -n "$ARGOCD_NAMESPACE" -o jsonpath='{.status.health.status}' 2>/dev/null || echo "Unknown")
-    
-    echo "    Application $app current status: sync=$app_status, health=$app_health"
-    
-    # Force sync with aggressive options
-    echo "    🔄 Force syncing $app with aggressive options..."
-    oc --kubeconfig="$kubeconfig" patch application "$app" -n "$ARGOCD_NAMESPACE" --type=merge -p='{"operation":{"sync":{"syncOptions":["CreateNamespace=true","PrunePropagationPolicy=foreground","PruneLast=true","Force=true","Replace=true"]}}}' &>/dev/null || true
-    
-    # Wait for sync to start
-    sleep 5
-    
-    # Check for specific resources that need aggressive sync
-    echo "    🔍 Checking for specific resources that need aggressive sync in $app..."
-    
-    # Get all resources in the application
-    local all_resources=$(oc --kubeconfig="$kubeconfig" get application "$app" -n "$ARGOCD_NAMESPACE" -o jsonpath='{.status.resources[*].name}' 2>/dev/null || echo "")
-    
-    if [[ -n "$all_resources" ]]; then
-      echo "    📋 Found resources in $app: $all_resources"
-      
-      # Force sync each resource individually
-      for resource in $all_resources; do
-        echo "    🔄 Force syncing resource: $resource"
-        oc --kubeconfig="$kubeconfig" patch application "$app" -n "$ARGOCD_NAMESPACE" --type=merge -p="{\"operation\":{\"sync\":{\"resources\":[{\"kind\":\"$(echo $resource | cut -d'/' -f1)\",\"name\":\"$(echo $resource | cut -d'/' -f2)\"}],\"syncOptions\":[\"Force=true\",\"Replace=true\"]}}}" &>/dev/null || true
-      done
-    fi
-    
-    # Check for namespace policies specifically
-    echo "    🔍 Looking for namespace policies in $app..."
-    local namespace_policies=$(oc --kubeconfig="$kubeconfig" get application "$app" -n "$ARGOCD_NAMESPACE" -o jsonpath='{.status.resources[?(@.kind=="Policy")].name}' 2>/dev/null || echo "")
-    
-    if [[ -n "$namespace_policies" ]]; then
-      echo "    📋 Found namespace policies: $namespace_policies"
-      
-      # Force sync namespace policies with aggressive options
-      for policy in $namespace_policies; do
-        echo "    🔄 Aggressively syncing namespace policy: $policy"
-        oc --kubeconfig="$kubeconfig" patch application "$app" -n "$ARGOCD_NAMESPACE" --type=merge -p="{\"operation\":{\"sync\":{\"resources\":[{\"kind\":\"Policy\",\"name\":\"$policy\"}],\"syncOptions\":[\"Force=true\",\"Replace=true\",\"PrunePropagationPolicy=foreground\"]}}}" &>/dev/null || true
-      done
-    fi
-  done
-  
-  # STEP 3: Force refresh all applications
-  echo "  🔄 STEP 3: Force refreshing all applications..."
-  
-  for app in $applications; do
-    echo "  🔄 Force refreshing application: $app"
-    
-    # Force hard refresh
-    oc --kubeconfig="$kubeconfig" patch application "$app" -n "$ARGOCD_NAMESPACE" --type=merge -p='{"operation":{"initiatedBy":{"username":"argocd-health-monitor"},"info":[{"name":"refresh","value":"hard"}]}}' &>/dev/null || true
-    
-    # Wait for refresh to complete
-    sleep 10
-  done
-  
-  # STEP 4: Final verification and sync
-  echo "  🔍 STEP 4: Final verification and sync..."
-  
-  for app in $applications; do
-    echo "  🔍 Final check for application: $app"
-    
-    # Get final status
-    local final_status=$(oc --kubeconfig="$kubeconfig" get application "$app" -n "$ARGOCD_NAMESPACE" -o jsonpath='{.status.sync.status}' 2>/dev/null || echo "Unknown")
-    local final_health=$(oc --kubeconfig="$kubeconfig" get application "$app" -n "$ARGOCD_NAMESPACE" -o jsonpath='{.status.health.status}' 2>/dev/null || echo "Unknown")
-    
-    echo "    Final status for $app: sync=$final_status, health=$final_health"
-    
-    # If still not healthy, try one more aggressive sync
-    if [[ "$final_status" != "Synced" || "$final_health" != "Healthy" ]]; then
-      echo "    🔄 Application $app still not healthy - attempting final aggressive sync..."
-      oc --kubeconfig="$kubeconfig" patch application "$app" -n "$ARGOCD_NAMESPACE" --type=merge -p='{"operation":{"sync":{"syncOptions":["CreateNamespace=true","PrunePropagationPolicy=foreground","PruneLast=true","Force=true","Replace=true","Prune=true"]}}}' &>/dev/null || true
-    fi
-  done
-  
-  echo "  🔄🔄🔄 AGGRESSIVE ARGOCD SYNC COMPLETED FOR $ARGOCD_NAMESPACE NAMESPACE 🔄🔄🔄"
-  echo "  🎯 Result: Used ArgoCD sync mechanisms to force sync all applications and namespace policies"
-  echo "  ⚠️  Note: This approach preserves existing resources while forcing proper synchronization"
 }
 
 # Function to download kubeconfig for a cluster (using same logic as download-kubeconfigs.sh)
@@ -618,22 +422,14 @@ while [[ $attempt -le $MAX_ATTEMPTS ]]; do
     fi
   fi
   
-  # Remediate wedged clusters
+  # Remediate wedged clusters (same targeted force-sync for all: Namespace in Application ramendr-starter-kit-resilient)
   if [[ ${#wedged_clusters[@]} -gt 0 ]]; then
     echo "Found wedged clusters: ${wedged_clusters[*]}"
     
     for cluster in "${wedged_clusters[@]}"; do
       kubeconfig_path="/tmp/${cluster}-kubeconfig.yaml"
-      
-      # Apply aggressive ArgoCD sync specifically for ocp-secondary if it's wedged
-      if [[ "$cluster" == "ocp-secondary" ]]; then
-        echo "🔄🔄🔄 APPLYING AGGRESSIVE ARGOCD SYNC TO WEDGED OCP-SECONDARY 🔄🔄🔄"
-        echo "  🎯 Target: Force sync all applications and namespace policies on ocp-secondary"
-        apply_aggressive_argocd_sync "$cluster" "$kubeconfig_path"
-      else
-        echo "🔧 Applying standard ArgoCD sync remediation to wedged cluster: $cluster"
-        remediate_wedged_cluster "$cluster" "$kubeconfig_path"
-      fi
+      echo "🔧 Applying remediation to wedged cluster: $cluster"
+      remediate_wedged_cluster "$cluster" "$kubeconfig_path"
     done
     
     echo "✅ Remediation completed for wedged clusters"
@@ -647,5 +443,7 @@ while [[ $attempt -le $MAX_ATTEMPTS ]]; do
   fi
 done
 
-echo "🎉 ArgoCD health monitoring completed"
-
+# Exited loop by exhausting attempts (did not exit 0 from "all healthy")
+echo "❌ ArgoCD health monitoring did not complete successfully within $MAX_ATTEMPTS attempts"
+echo "   One or both required Argo CD instances (on $PRIMARY_CLUSTER and $SECONDARY_CLUSTER) were not running correctly."
+exit 1

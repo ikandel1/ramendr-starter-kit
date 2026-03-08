@@ -3,9 +3,9 @@ set -euo pipefail
 
 echo "Starting Submariner prerequisites check..."
 
-# Configuration
-PRIMARY_CLUSTER="ocp-primary"
-SECONDARY_CLUSTER="ocp-secondary"
+# Configuration (PRIMARY_CLUSTER and SECONDARY_CLUSTER from values.yaml via env)
+PRIMARY_CLUSTER="${PRIMARY_CLUSTER:-ocp-primary}"
+SECONDARY_CLUSTER="${SECONDARY_CLUSTER:-ocp-secondary}"
 KUBECONFIG_DIR="/tmp/kubeconfigs"
 MAX_ATTEMPTS=120  # 2 hours with 1 minute intervals
 SLEEP_INTERVAL=60  # 1 minute between checks

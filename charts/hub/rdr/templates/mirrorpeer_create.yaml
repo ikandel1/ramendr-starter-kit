@@ -12,11 +12,11 @@ metadata:
     argocd.argoproj.io/sync-wave: "8"
 spec:
   items:
-  - clusterName: {{ $clusters.primary.name }}
+  - clusterName: {{ include "rdr.primaryClusterName" $ }}
     storageClusterRef:
       name: ocs-storagecluster
       namespace: openshift-storage
-  - clusterName: {{ $clusters.secondary.name }}
+  - clusterName: {{ include "rdr.secondaryClusterName" $ }}
     storageClusterRef:
       name: ocs-storagecluster
       namespace: openshift-storage

@@ -1,38 +1,51 @@
+{{- $drpc := .Values.drpc | default dict }}
 ---
 apiVersion: ramendr.openshift.io/v1alpha1
 kind: DRPlacementControl
 metadata:
   annotations:
-    drplacementcontrol.ramendr.openshift.io/app-namespace: openshift-dr-ops
+    drplacementcontrol.ramendr.openshift.io/app-namespace: {{ $drpc.namespace | default "openshift-dr-ops" }}
     argocd.argoproj.io/sync-wave: "9"
   labels:
     cluster.open-cluster-management.io/backup: ramen
-  name: gitops-vm-protection
-  namespace: openshift-dr-ops
+  name: {{ $drpc.name | default "gitops-vm-protection" }}
+  namespace: {{ $drpc.namespace | default "openshift-dr-ops" }}
 spec:
   drPolicyRef:
     apiVersion: ramendr.openshift.io/v1alpha1
     kind: DRPolicy
-    name: 2m-vm
+    name: {{ index $drpc "drPolicyRef" "name" | default "2m-vm" }}
   kubeObjectProtection:
-    captureInterval: 2m0s
+    captureInterval: {{ index $drpc "kubeObjectProtection" "captureInterval" | default "2m0s" }}
     kubeObjectSelector:
       matchExpressions:
+      {{- with index $drpc "kubeObjectProtection" "kubeObjectSelector" "matchExpressions" }}
+      {{- toYaml . | nindent 6 }}
+      {{- else }}
       - key: drprotection
         operator: In
         values:
         - "true"
+      {{- end }}
   placementRef:
     apiVersion: cluster.open-cluster-management.io/v1beta1
     kind: Placement
-    name: gitops-vm-protection-placement-1
-    namespace: openshift-dr-ops
-  preferredCluster: ocp-primary
+    name: {{ index $drpc "placementRef" "name" | default "gitops-vm-protection-placement-1" }}
+    namespace: {{ index $drpc "placementRef" "namespace" | default "openshift-dr-ops" }}
+  preferredCluster: {{ include "rdr.preferredClusterName" . }}
   protectedNamespaces:
+  {{- with index $drpc "protectedNamespaces" }}
+  {{- toYaml . | nindent 2 }}
+  {{- else }}
   - gitops-vms
+  {{- end }}
   pvcSelector:
     matchExpressions:
+    {{- with index $drpc "pvcSelector" "matchExpressions" }}
+    {{- toYaml . | nindent 6 }}
+    {{- else }}
     - key: app.kubernetes.io/component
       operator: In
       values:
       - storage
+    {{- end }}

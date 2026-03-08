@@ -25,6 +25,19 @@ spec:
           containers:
           - name: argocd-health-monitor
             image: registry.redhat.io/openshift4/ose-cli:latest
+            env:
+            - name: PRIMARY_CLUSTER
+              value: {{ include "opp.primaryClusterName" . | quote }}
+            - name: SECONDARY_CLUSTER
+              value: {{ include "opp.secondaryClusterName" . | quote }}
+            - name: FORCE_SYNC_APP_NAMESPACE
+              value: {{ .Values.argocdHealthMonitor.forceSyncAppNamespace | default "openshift-gitops" | quote }}
+            - name: FORCE_SYNC_APP_NAME
+              value: {{ .Values.argocdHealthMonitor.forceSyncAppName | default "ramendr-starter-kit-resilient" | quote }}
+            - name: FORCE_SYNC_RESOURCE_KIND
+              value: {{ .Values.argocdHealthMonitor.forceSyncResourceKind | default "Namespace" | quote }}
+            - name: FORCE_SYNC_RESOURCE_NAME
+              value: {{ .Values.argocdHealthMonitor.forceSyncResourceName | default "ramendr-starter-kit-resilient" | quote }}
             command:
             - /bin/bash
             - -c

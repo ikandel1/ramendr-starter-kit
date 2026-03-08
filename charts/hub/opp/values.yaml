@@ -1,8 +1,19 @@
-# No Values
-# Need to use fromSecret for these keys. problems ith json output.
-##  accessKey: '{{ `{{ fromSecret "openshift-storage" "noobaa-admin" "AWS_ACCESS_KEY_ID" }}` }}'
-##  secretKey: '{{ `{{ fromSecret "openshift-storage" "noobaa-admin" "AWS_SECRET_ACCESS_KEY" }}` }}'
+---
+# DR pair cluster names - same structure as rdr chart (regionalDR).
+# Override via values-hub or overrides so opp-policy and rdr use the same names.
+regionalDR:
+  - name: resilient
+    clusters:
+      primary:
+        name: ocp-primary
+      secondary:
+        name: ocp-secondary
 
 argocdHealthMonitor:
   enabled: true
-
+  # When remediating a wedged cluster, force-sync this specific resource in this Application (instead of restarting Argo CD)
+  forceSyncAppNamespace: openshift-gitops
+  forceSyncAppName: ramendr-starter-kit-resilient
+  # Specific resource to sync: the Namespace (kind/name) in the application above
+  forceSyncResourceKind: Namespace
+  forceSyncResourceName: ramendr-starter-kit-resilient

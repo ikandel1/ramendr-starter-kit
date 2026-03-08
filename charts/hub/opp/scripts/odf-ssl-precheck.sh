@@ -54,12 +54,16 @@ cleanup_placeholder_configmaps() {
   return 0
 }
 
+# Primary and secondary managed cluster names (from values.yaml via env)
+PRIMARY_CLUSTER="${PRIMARY_CLUSTER:-ocp-primary}"
+SECONDARY_CLUSTER="${SECONDARY_CLUSTER:-ocp-secondary}"
+
 # Function to wait for required clusters to be available and joined
 wait_for_cluster_readiness() {
-  echo "🔍 Waiting for required clusters (ocp-primary and ocp-secondary) to be available and joined..."
+  echo "🔍 Waiting for required clusters ($PRIMARY_CLUSTER and $SECONDARY_CLUSTER) to be available and joined..."
   echo "   This may take several minutes during initial cluster deployment"
   
-  REQUIRED_CLUSTERS=("ocp-primary" "ocp-secondary")
+  REQUIRED_CLUSTERS=("$PRIMARY_CLUSTER" "$SECONDARY_CLUSTER")
   attempt=1
   
   while [[ $attempt -le $CLUSTER_READINESS_MAX_ATTEMPTS ]]; do
@@ -154,12 +158,12 @@ check_certificate_distribution() {
   fi
   
   hub_certs=$(echo "$bundle_content" | grep -c "hub" || echo "0")
-  ocp_primary_certs=$(echo "$bundle_content" | grep -c "ocp-primary" || echo "0")
-  ocp_secondary_certs=$(echo "$bundle_content" | grep -c "ocp-secondary" || echo "0")
+  ocp_primary_certs=$(echo "$bundle_content" | grep -c "$PRIMARY_CLUSTER" || echo "0")
+  ocp_secondary_certs=$(echo "$bundle_content" | grep -c "$SECONDARY_CLUSTER" || echo "0")
   
   echo "  Hub cluster certificates: $hub_certs"
-  echo "  ocp-primary certificates: $ocp_primary_certs"
-  echo "  ocp-secondary certificates: $ocp_secondary_certs"
+  echo "  $PRIMARY_CLUSTER certificates: $ocp_primary_certs"
+  echo "  $SECONDARY_CLUSTER certificates: $ocp_secondary_certs"
   
   if [[ $hub_certs -lt 2 || $ocp_primary_certs -lt 2 || $ocp_secondary_certs -lt 2 ]]; then
     echo "❌ Missing certificates from one or more clusters"
@@ -361,7 +365,7 @@ spec:
           echo "  Added hub ingress CA to bundle"
           
           # Track required clusters
-          REQUIRED_CLUSTERS=("hub" "ocp-primary" "ocp-secondary")
+          REQUIRED_CLUSTERS=("hub" "$PRIMARY_CLUSTER" "$SECONDARY_CLUSTER")
           EXTRACTED_CLUSTERS=()
           if [[ "$hub_ca_extracted" == "true" ]]; then
             EXTRACTED_CLUSTERS+=("hub")
@@ -369,7 +373,7 @@ spec:
           
           cluster_count=0
           for cluster in $managed_clusters; do
-            if [[ "$cluster" == "ocp-primary" || "$cluster" == "ocp-secondary" ]]; then
+            if [[ "$cluster" == "$PRIMARY_CLUSTER" || "$cluster" == "$SECONDARY_CLUSTER" ]]; then
               cluster_count=$((cluster_count + 1))
               echo "3.$cluster_count Extracting CA from $cluster..."
               
@@ -411,8 +415,8 @@ spec:
             echo ""
             echo "The ODF SSL certificate extractor job requires CA material from ALL three clusters:"
             echo "   - hub (hub cluster)"
-            echo "   - ocp-primary (primary managed cluster)"  
-            echo "   - ocp-secondary (secondary managed cluster)"
+            echo "   - $PRIMARY_CLUSTER (primary managed cluster)"
+            echo "   - $SECONDARY_CLUSTER (secondary managed cluster)"
             echo ""
             echo "Without CA material from all clusters, the DR setup will fail."
             echo "Please ensure all clusters are accessible and have proper kubeconfigs."
@@ -841,7 +845,7 @@ with open('existing-ramen-config.yaml', 'w') as f:
           
           echo "9. Verifying certificate distribution to managed clusters..."
           verification_failed=false
-          REQUIRED_VERIFICATION_CLUSTERS=("ocp-primary" "ocp-secondary")
+          REQUIRED_VERIFICATION_CLUSTERS=("$PRIMARY_CLUSTER" "$SECONDARY_CLUSTER")
           VERIFIED_CLUSTERS=()
           
           for cluster in $MANAGED_CLUSTERS; do
@@ -893,7 +897,7 @@ with open('existing-ramen-config.yaml', 'w') as f:
             done
             echo ""
             echo "The ODF SSL certificate extractor job requires successful certificate distribution"
-            echo "to ALL managed clusters (ocp-primary and ocp-secondary)."
+            echo "to ALL managed clusters ($PRIMARY_CLUSTER and $SECONDARY_CLUSTER)."
             echo ""
             echo "Without proper certificate distribution, the DR setup will fail."
             echo "Please check cluster connectivity and kubeconfig availability."

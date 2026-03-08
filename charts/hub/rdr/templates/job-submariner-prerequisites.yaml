@@ -17,6 +17,11 @@ spec:
       containers:
       - name: prerequisites-checker
         image: registry.redhat.io/openshift4/ose-cli:latest
+        env:
+        - name: PRIMARY_CLUSTER
+          value: {{ include "rdr.primaryClusterName" . | quote }}
+        - name: SECONDARY_CLUSTER
+          value: {{ include "rdr.secondaryClusterName" . | quote }}
         command:
         - /bin/bash
         - -c

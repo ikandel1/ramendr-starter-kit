@@ -1,12 +1,26 @@
 #!/bin/bash
+# ArgoCD health monitor - CronJob (runs every 15 min).
+# Why two scripts? The Job (argocd-health-monitor.sh) runs once at deploy, retries until both clusters are
+# healthy then exits. This CronJob runs periodically to detect and remediate wedged clusters after deploy.
+# Both use the same remediation: force-sync Namespace ramendr-starter-kit-resilient in Application ramendr-starter-kit-resilient.
 set -euo pipefail
 
 echo "Starting ArgoCD health monitoring and remediation..."
+
+# Primary and secondary managed cluster names (from values.yaml via env)
+PRIMARY_CLUSTER="${PRIMARY_CLUSTER:-ocp-primary}"
+SECONDARY_CLUSTER="${SECONDARY_CLUSTER:-ocp-secondary}"
 
 # Configuration
 MAX_ATTEMPTS=270  # Check 270 times (90 minutes with 20s intervals) before failing
 SLEEP_INTERVAL=20
 ARGOCD_NAMESPACE="openshift-gitops"
+# Namespace where the Application to force-sync lives (parameterized; default openshift-gitops)
+FORCE_SYNC_APP_NAMESPACE="${FORCE_SYNC_APP_NAMESPACE:-openshift-gitops}"
+# Application and specific resource to force-sync when remediating (Namespace ramendr-starter-kit-resilient in Application ramendr-starter-kit-resilient)
+FORCE_SYNC_APP_NAME="${FORCE_SYNC_APP_NAME:-ramendr-starter-kit-resilient}"
+FORCE_SYNC_RESOURCE_KIND="${FORCE_SYNC_RESOURCE_KIND:-Namespace}"
+FORCE_SYNC_RESOURCE_NAME="${FORCE_SYNC_RESOURCE_NAME:-ramendr-starter-kit-resilient}"
 HEALTH_CHECK_TIMEOUT=30
 
 # Function to check if a cluster is wedged
@@ -26,11 +40,11 @@ check_cluster_wedged() {
   local cluster_argocd_namespace=""
   local cluster_argocd_instance=""
   case "$cluster" in
-    "ocp-primary")
+    "$PRIMARY_CLUSTER")
       cluster_argocd_namespace="ramendr-starter-kit-resilient"
       cluster_argocd_instance="resilient-gitops-server"
       ;;
-    "ocp-secondary")
+    "$SECONDARY_CLUSTER")
       cluster_argocd_namespace="ramendr-starter-kit-resilient"
       cluster_argocd_instance="resilient-gitops-server"
       ;;
@@ -96,81 +110,40 @@ check_cluster_wedged() {
   fi
 }
 
-# Function to remediate a wedged cluster
+# Function to remediate a wedged cluster (force sync a known resource instead of restarting Argo CD)
 remediate_wedged_cluster() {
   local cluster="$1"
   local kubeconfig="$2"
   
-  echo "🔧 Remediating wedged cluster: $cluster"
+  echo "🔧 Remediating wedged cluster: $cluster (forcibly resyncing resource $FORCE_SYNC_RESOURCE_KIND/$FORCE_SYNC_RESOURCE_NAME in Application $FORCE_SYNC_APP_NAME)"
   
-  # Stop all ArgoCD instances by scaling down deployments
-  echo "  Stopping all ArgoCD instances on $cluster..."
-  oc --kubeconfig="$kubeconfig" scale deployment --all -n "$ARGOCD_NAMESPACE" --replicas=0 &>/dev/null || true
-  oc --kubeconfig="$kubeconfig" scale statefulset --all -n "$ARGOCD_NAMESPACE" --replicas=0 &>/dev/null || true
-  
-  # If scaling doesn't work, try more aggressive cleanup
-  echo "  Attempting aggressive cleanup for stuck deployments..."
-  oc --kubeconfig="$kubeconfig" delete deployment --all -n "$ARGOCD_NAMESPACE" --grace-period=0 --force &>/dev/null || true
-  oc --kubeconfig="$kubeconfig" delete statefulset --all -n "$ARGOCD_NAMESPACE" --grace-period=0 --force &>/dev/null || true
-  oc --kubeconfig="$kubeconfig" delete pods --all -n "$ARGOCD_NAMESPACE" --grace-period=0 --force &>/dev/null || true
-  
-  # Wait for all instances to stop
-  echo "  Waiting for ArgoCD instances to stop..."
-  local attempt=1
-  while [[ $attempt -le 30 ]]; do
-    local running_pods=$(oc --kubeconfig="$kubeconfig" get pods -n "$ARGOCD_NAMESPACE" --field-selector=status.phase=Running --no-headers 2>/dev/null | wc -l)
-    if [[ $running_pods -eq 0 ]]; then
-      echo "  ✅ All ArgoCD instances stopped on $cluster"
-      break
-    fi
-    echo "  Waiting for instances to stop... (attempt $attempt/30)"
-    sleep 5
-    ((attempt++))
-  done
-  
-  # Restart all ArgoCD instances by scaling up deployments
-  echo "  Restarting all ArgoCD instances on $cluster..."
-  oc --kubeconfig="$kubeconfig" scale deployment --all -n "$ARGOCD_NAMESPACE" --replicas=1 &>/dev/null || true
-  oc --kubeconfig="$kubeconfig" scale statefulset --all -n "$ARGOCD_NAMESPACE" --replicas=1 &>/dev/null || true
-  
-  # Wait for pods to restart
-  echo "  Waiting for ArgoCD pods to restart on $cluster..."
-  local attempt=1
-  while [[ $attempt -le 20 ]]; do
-    local running_pods=$(oc --kubeconfig="$kubeconfig" get pods -n "$ARGOCD_NAMESPACE" --field-selector=status.phase=Running --no-headers 2>/dev/null | wc -l)
-    local total_pods=$(oc --kubeconfig="$kubeconfig" get pods -n "$ARGOCD_NAMESPACE" --no-headers 2>/dev/null | wc -l)
-    
-    if [[ $running_pods -gt 0 && $running_pods -eq $total_pods ]]; then
-      echo "  ✅ ArgoCD pods restarted successfully on $cluster"
-      break
-    fi
-    
-    echo "  Waiting for pods to restart... (attempt $attempt/20)"
-    sleep 10
-    ((attempt++))
-  done
-  
-  if [[ $attempt -gt 20 ]]; then
-    echo "  ⚠️  ArgoCD pods may not have fully restarted on $cluster"
+  # Forcibly resync the specific resource (e.g. Namespace ramendr-starter-kit-resilient) in the Application (no Argo CD restart)
+  if oc --kubeconfig="$kubeconfig" get application "$FORCE_SYNC_APP_NAME" -n "$FORCE_SYNC_APP_NAMESPACE" &>/dev/null; then
+    echo "  Force syncing resource $FORCE_SYNC_RESOURCE_KIND/$FORCE_SYNC_RESOURCE_NAME in Application $FORCE_SYNC_APP_NAME (namespace $FORCE_SYNC_APP_NAMESPACE) on $cluster..."
+    oc --kubeconfig="$kubeconfig" patch application "$FORCE_SYNC_APP_NAME" -n "$FORCE_SYNC_APP_NAMESPACE" --type=merge -p="{\"operation\":{\"sync\":{\"resources\":[{\"kind\":\"$FORCE_SYNC_RESOURCE_KIND\",\"name\":\"$FORCE_SYNC_RESOURCE_NAME\"}],\"syncOptions\":[\"Force=true\"]}}}" &>/dev/null || true
+    echo "  ✅ Triggered force sync for $FORCE_SYNC_RESOURCE_KIND/$FORCE_SYNC_RESOURCE_NAME"
+  else
+    echo "  ⚠️  Application $FORCE_SYNC_APP_NAME not found in $FORCE_SYNC_APP_NAMESPACE on $cluster - cannot force sync"
   fi
   
-  # Trigger ArgoCD refresh/sync
+  # Trigger ArgoCD refresh/sync (argocd CLI needs --server when run inside the pod)
   echo "  Triggering ArgoCD refresh on $cluster..."
   local server_pod=$(oc --kubeconfig="$kubeconfig" get pods -n "$ARGOCD_NAMESPACE" -l app.kubernetes.io/name=openshift-gitops-server --field-selector=status.phase=Running -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+  local argocd_server="localhost:8080"
   if [[ -n "$server_pod" ]]; then
     # Trigger refresh of all applications
-    oc --kubeconfig="$kubeconfig" exec -n "$ARGOCD_NAMESPACE" "$server_pod" -- argocd app list -o name | while read app; do
+    oc --kubeconfig="$kubeconfig" exec -n "$ARGOCD_NAMESPACE" "$server_pod" -- argocd app list --server "$argocd_server" -o name 2>/dev/null | while read app; do
       if [[ -n "$app" ]]; then
         echo "    Refreshing $app..."
-        oc --kubeconfig="$kubeconfig" exec -n "$ARGOCD_NAMESPACE" "$server_pod" -- argocd app get "$app" --refresh &>/dev/null || true
+        oc --kubeconfig="$kubeconfig" exec -n "$ARGOCD_NAMESPACE" "$server_pod" -- argocd app get "$app" --server "$argocd_server" --refresh &>/dev/null || true
       fi
     done
-    
+
     # Trigger hard refresh
-    oc --kubeconfig="$kubeconfig" exec -n "$ARGOCD_NAMESPACE" "$server_pod" -- argocd app list -o name | while read app; do
+    oc --kubeconfig="$kubeconfig" exec -n "$ARGOCD_NAMESPACE" "$server_pod" -- argocd app list --server "$argocd_server" -o name 2>/dev/null | while read app; do
       if [[ -n "$app" ]]; then
         echo "    Hard refreshing $app..."
-        oc --kubeconfig="$kubeconfig" exec -n "$ARGOCD_NAMESPACE" "$server_pod" -- argocd app get "$app" --hard-refresh &>/dev/null || true
+        oc --kubeconfig="$kubeconfig" exec -n "$ARGOCD_NAMESPACE" "$server_pod" -- argocd app get "$app" --server "$argocd_server" --hard-refresh &>/dev/null || true
       fi
     done
   fi
