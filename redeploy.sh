@@ -196,7 +196,7 @@ wait_for_convergence() {
         if [[ $((tries % 10)) -eq 0 ]]; then
             for app in regional-dr opp-policy; do
                 oc patch applications.argoproj.io "$app" -n ramendr-starter-kit-hub --type merge \
-                    -p '{"operation":{"initiatedBy":{"automated":true},"sync":{"syncStrategy":{"apply":{"force":true}}}}}' 2>/dev/null || true
+                    -p '{"operation":{"initiatedBy":{"automated":true},"sync":{}}}' 2>/dev/null || true
             done
         fi
     done

@@ -11,6 +11,12 @@ clusterOverrides:
     install_config:
       metadata:
         name: ocp-primary
+      compute:
+        - name: worker
+          replicas: 3
+          platform:
+            aws:
+              type: m5.4xlarge
       platform:
         aws:
           region: eu-north-1
@@ -20,6 +26,12 @@ clusterOverrides:
     install_config:
       metadata:
         name: ocp-secondary
+      compute:
+        - name: worker
+          replicas: 3
+          platform:
+            aws:
+              type: m5.4xlarge
       platform:
         aws:
           region: eu-west-1
