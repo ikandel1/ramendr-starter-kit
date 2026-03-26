@@ -106,9 +106,9 @@ You will need:
 Download the **amd64 (x86_64)** version even on Apple Silicon Macs — the clusters run x86 instances:
 
 ```bash
-# Download amd64 version for OCP 4.18
+# Download amd64 version for OCP 4.21
 curl -L -o /tmp/openshift-install.tar.gz \
-  "https://mirror.openshift.com/pub/openshift-v4/clients/ocp/stable-4.18/openshift-install-mac-amd64.tar.gz"
+  "https://mirror.openshift.com/pub/openshift-v4/clients/ocp/stable-4.21/openshift-install-mac-amd64.tar.gz"
 
 mkdir -p ~/.local/bin
 tar xzf /tmp/openshift-install.tar.gz -C ~/.local/bin openshift-install
@@ -607,26 +607,26 @@ oc get secret -n ocp-secondary $(oc get secrets -n ocp-secondary -o name | grep 
 | Operator | Version |
 |---|---|
 | Validated Patterns Operator | 0.0.65 |
-| OpenShift GitOps (ArgoCD) | 1.18.3 |
-| Advanced Cluster Management | 2.13.5 |
-| ODF Multicluster Orchestrator | 4.18.15 |
-| ODF Operator | 4.18.15 |
-| ODR Hub Operator | 4.18.15 |
+| OpenShift GitOps (ArgoCD) | 1.21.x |
+| Advanced Cluster Management | 2.16.x |
+| ODF Multicluster Orchestrator | 4.21.x |
+| ODF Operator | 4.21.x |
+| ODR Hub Operator | 4.21.x |
 
 #### Managed Clusters (both primary and secondary)
 
 | Operator | Version |
 |---|---|
-| OpenShift Virtualization (KubeVirt) | 4.18.29 |
-| ODF Operator | 4.18.15 |
-| OCS Operator | 4.18.15 |
-| ODR Cluster Operator | 4.18.15 |
-| Submariner | 0.20.2 |
-| OADP Operator | 1.4.7 |
-| External DNS Operator | 1.3.2 |
-| Node Health Check Operator | 0.10.1 |
-| Self Node Remediation | 0.11.0 |
-| OpenShift GitOps | 1.18.3 |
+| OpenShift Virtualization (KubeVirt) | 4.21.x |
+| ODF Operator | 4.21.x |
+| OCS Operator | 4.21.x |
+| ODR Cluster Operator | 4.21.x |
+| Submariner | 0.20.x |
+| OADP Operator | 1.7.x |
+| External DNS Operator | 1.3.x |
+| Node Health Check Operator | 0.10.x |
+| Self Node Remediation | 0.11.x |
+| OpenShift GitOps | 1.21.x |
 
 ### DR Protection Status
 
@@ -637,7 +637,7 @@ oc get secret -n ocp-secondary $(oc get secrets -n ocp-secondary -o name | grep 
 | **DRClusters** | Both `ocp-primary` and `ocp-secondary` Available |
 | **MirrorPeer** | `ExchangedSecret` — ODF secrets exchanged between clusters |
 | **Submariner** | Healthy — both clusters connected |
-| **ODF StorageCluster** | Ready on both clusters (v4.18.15) |
+| **ODF StorageCluster** | Ready on both clusters (v4.21.x) |
 | **Volume Replication** | 4 PVCs replicating (Primary state) |
 | **DRPC `gitops-vm-protection`** | Deployed + Protected on `ocp-primary` |
 

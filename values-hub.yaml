@@ -16,15 +16,17 @@ clusterGroup:
     acm:
       name: advanced-cluster-management
       namespace: open-cluster-management
-      channel: release-2.14
+      channel: release-2.16
 
     odf-multicluster-orchestrator:
       name: odf-multicluster-orchestrator
       namespace: openshift-operators
+      channel: stable-4.21
 
     openshift-data-foundation:
       name: odf-operator
       namespace: openshift-storage
+      channel: stable-4.21
 
   argoCD:
     resourceTrackingMethod: annotation

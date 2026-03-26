@@ -4,7 +4,7 @@ This document describes the enhanced certificate management policies specificall
 
 ## Overview
 
-The ODF SSL certificate management system provides automated certificate extraction, distribution, and configuration for secure SSL access across clusters in a regional disaster recovery setup. This implementation follows the [Red Hat ODF Disaster Recovery documentation](https://docs.redhat.com/en/documentation/red_hat_openshift_data_foundation/4.18/html-single/configuring_openshift_data_foundation_disaster_recovery_for_openshift_workloads/index#creating-odf-cluster-on-managed-clusters_rdr).
+The ODF SSL certificate management system provides automated certificate extraction, distribution, and configuration for secure SSL access across clusters in a regional disaster recovery setup. This implementation follows the [Red Hat ODF Disaster Recovery documentation](https://docs.redhat.com/en/documentation/red_hat_openshift_data_foundation/4.21/html-single/configuring_openshift_data_foundation_disaster_recovery_for_openshift_workloads/index#creating-odf-cluster-on-managed-clusters_rdr).
 
 ## Key Features
 
@@ -328,8 +328,8 @@ oc get placementrule placement-odf-ssl-certificates -n open-cluster-management -
 
 ```text
 ## References
-- [Red Hat ODF Disaster Recovery Documentation](https://docs.redhat.com/en/documentation/red_hat_openshift_data_foundation/4.18/html-single/configuring_openshift_data_foundation_disaster_recovery_for_openshift_workloads/index#creating-odf-cluster-on-managed-clusters_rdr)
+- [Red Hat ODF Disaster Recovery Documentation](https://docs.redhat.com/en/documentation/red_hat_openshift_data_foundation/4.21/html-single/configuring_openshift_data_foundation_disaster_recovery_for_openshift_workloads/index#creating-odf-cluster-on-managed-clusters_rdr)
 
-- [OpenShift Data Foundation Regional DR](https://docs.redhat.com/en/documentation/red_hat_openshift_data_foundation/4.18/html-single/configuring_openshift_data_foundation_disaster_recovery_for_openshift_workloads/index#regional-dr-solution-for-openshift-data-foundation)
+- [OpenShift Data Foundation Regional DR](https://docs.redhat.com/en/documentation/red_hat_openshift_data_foundation/4.21/html-single/configuring_openshift_data_foundation_disaster_recovery_for_openshift_workloads/index#regional-dr-solution-for-openshift-data-foundation)
 
 - [Advanced Cluster Management Policies](https://access.redhat.com/documentation/en-us/red_hat_advanced_cluster_management_for_kubernetes/2.9/html/governance/governance#governance-intro)
