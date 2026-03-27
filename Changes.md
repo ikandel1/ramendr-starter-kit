@@ -19,3 +19,9 @@ v1.1 - March 2026
 * Add explicit ODF channel stable-4.21 for odf-operator and odf-multicluster-orchestrator on hub and managed clusters.
 * Update OADP subscription channel from stable-1.4 to stable (tracks the single supported version for OCP 4.21, currently 1.7.x).
 * Update openshift-install download URL to stable-4.21 in deployment guide.
+* Fix Submariner gateway node provisioning for OCP 4.21:
+  - Change gateway instance type from c5d.large to m5.large (c5d/r5d/m5d NVMe instance types
+    fail to bootstrap on OCP 4.21 due to rpm-ostreed crash loops).
+  - Add a ManifestWork-based CatalogSource (redhat-operator-index:v4.20) on managed clusters
+    to provide the submariner package, which is absent from redhat-operator-index:v4.21.
+  - Configure SubmarinerConfig.subscriptionConfig to use this custom catalog source.

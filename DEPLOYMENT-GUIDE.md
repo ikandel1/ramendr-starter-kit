@@ -621,7 +621,7 @@ oc get secret -n ocp-secondary $(oc get secrets -n ocp-secondary -o name | grep 
 | ODF Operator | 4.21.x |
 | OCS Operator | 4.21.x |
 | ODR Cluster Operator | 4.21.x |
-| Submariner | 0.20.x |
+| Submariner | 0.22.x |
 | OADP Operator | 1.7.x |
 | External DNS Operator | 1.3.x |
 | Node Health Check Operator | 0.10.x |
@@ -753,4 +753,6 @@ watch 'oc get applications.argoproj.io -n ramendr-starter-kit-hub -o custom-colu
 | Submariner CRDs missing (early in deployment) | ACM/ODF hadn't finished deploying when `regional-dr` first tried to sync | Re-synced after operators were installed |
 | NooBaa DB CrashLoopBackOff on secondary | `role "noobaa" does not exist` — DB initialized without noobaa role due to race condition | Delete the PVC `db-noobaa-db-pg-0`, scale StatefulSet to 0/1 to force fresh init |
 | Clusters auto-destroyed after a few days | `devcluster.openshift.com` has automatic TTL cleanup | Use `./redeploy.sh` to rebuild the entire environment |
+| Submariner `subscription` fails with `no operators found in package submariner` on OCP 4.21 | The `redhat-operator-index:v4.21` catalog does not yet include the `submariner` package | Fixed in v1.1: a `ManifestWork` deploys a custom `submariner-catalog` CatalogSource (backed by `redhat-operator-index:v4.20`) to each managed cluster; `SubmarinerConfig.subscriptionConfig` points to it |
+| Submariner gateway node stuck in `Provisioned` / `rpm-ostreed.service` crash loop on OCP 4.21 | `c5d`/`r5d`/`m5d` instance types have NVMe local SSD; RHCOS on OCP 4.21 fails to boot on these | Fixed in v1.1: gateway instance type changed from `c5d.large` to `m5.large` (no local NVMe) |
 

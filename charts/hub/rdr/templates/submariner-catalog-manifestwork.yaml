@@ -1,0 +1,33 @@
+{{- $effectivePrimary := include "rdr.effectivePrimaryCluster" . | fromJson }}
+{{- $effectiveSecondary := include "rdr.effectiveSecondaryCluster" . | fromJson }}
+{{- range list $effectivePrimary $effectiveSecondary }}
+{{- $cluster := . }}
+---
+# The submariner package is absent from redhat-operator-index:v4.21.
+# This ManifestWork deploys a custom CatalogSource backed by the v4.20 index to the
+# managed cluster so that OLM can resolve the submariner subscription.
+# See SubmarinerConfig.spec.subscriptionConfig in submariner_addon_install.yaml.
+apiVersion: work.open-cluster-management.io/v1
+kind: ManifestWork
+metadata:
+  name: submariner-catalog
+  namespace: {{ $cluster.name }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "6"
+spec:
+  workload:
+    manifests:
+      - apiVersion: operators.coreos.com/v1alpha1
+        kind: CatalogSource
+        metadata:
+          name: submariner-catalog
+          namespace: openshift-marketplace
+        spec:
+          displayName: Submariner (v4.20 index)
+          image: registry.redhat.io/redhat/redhat-operator-index:v4.20
+          publisher: Red Hat
+          sourceType: grpc
+          updateStrategy:
+            registryPoll:
+              interval: 10m
+{{- end }}
