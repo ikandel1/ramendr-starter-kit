@@ -61,9 +61,20 @@ cleanup_dns() {
     stale=$(echo "$records" | python3 -c "
 import json, sys
 data = json.load(sys.stdin)
+base = '${BASE_DOMAIN}.'
 changes = []
 for r in data.get('ResourceRecordSets', []):
-    if r['Type'] in ('A', 'AAAA') and r['Name'] != '${BASE_DOMAIN}.':
+    name = r['Name']
+    rtype = r['Type']
+    # Delete A/AAAA records for any subdomain of the base domain (cluster API, ingress, etc.)
+    if rtype in ('A', 'AAAA') and name != base:
+        changes.append({'Action': 'DELETE', 'ResourceRecordSet': r})
+    # Delete TXT records created by the External DNS operator for managed cluster workloads.
+    # These are ownership records with names like:
+    #   external-dns-*.ocp-primary.<base_domain>.  (TXT)
+    #   external-dns-*.ocp-secondary.<base_domain>. (TXT)
+    # Leaving them behind causes openshift-install to abort with 'zone already has record sets'.
+    elif rtype == 'TXT' and name != base and base in name:
         changes.append({'Action': 'DELETE', 'ResourceRecordSet': r})
 if changes:
     print(json.dumps({'Comment': 'Cleanup stale records', 'Changes': changes}))
@@ -73,10 +84,12 @@ else:
 
     if [[ -n "$stale" ]]; then
         echo "$stale" > /tmp/dns-cleanup-batch.json
+        local count
+        count=$(python3 -c "import json; d=json.load(open('/tmp/dns-cleanup-batch.json')); print(len(d['Changes']))")
         aws route53 change-resource-record-sets \
             --hosted-zone-id "$HOSTED_ZONE_ID" \
             --change-batch file:///tmp/dns-cleanup-batch.json &>/dev/null
-        log "Stale DNS records cleaned."
+        log "Stale DNS records cleaned ($count records deleted)."
     else
         log "No stale DNS records found."
     fi
