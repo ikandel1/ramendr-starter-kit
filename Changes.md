@@ -31,3 +31,13 @@ v1.1 - March 2026
   - Add boot source readiness check in edge-gitops-vms-deploy script: waits up to 10 minutes
     for the rhel9 DataSource in openshift-virtualization-os-images to become ready before
     deploying VMs, preventing ErrorPvcNotFound / DataVolumeError states.
+  - Switch worker instance type from m5.4xlarge to m8i.4xlarge: the first-gen m5 instances
+    (Intel Xeon 8175M) do not expose vmx/svm CPU flags, so /dev/kvm is unavailable and
+    KubeVirt reports allocatable KVM=0, making VMs ErrorUnschedulable. The m8i instances
+    (Intel Xeon 6) support nested virtualization on AWS.
+  - Move primary cluster region from eu-north-1 to eu-central-1 because m8i instances
+    are not available in eu-north-1.
+* Fix klusterlet ManifestWork RBAC for ACM 2.16:
+  - ACM 2.16 restricts klusterlet-work-sa permissions. Added a ManifestWork that deploys
+    ClusterRole/Binding granting access to CatalogSource and Submariner CRDs on managed
+    clusters, preventing ManifestWork apply failures.
