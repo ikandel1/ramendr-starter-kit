@@ -1,0 +1,45 @@
+{{- $effectivePrimary := include "rdr.effectivePrimaryCluster" . | fromJson }}
+{{- $effectiveSecondary := include "rdr.effectiveSecondaryCluster" . | fromJson }}
+{{- range list $effectivePrimary $effectiveSecondary }}
+{{- $cluster := . }}
+---
+# ACM 2.16 restricts klusterlet-work-sa permissions on managed clusters.
+# Grant it access to CatalogSource and Submariner CRDs so that ManifestWorks
+# created by the Submariner addon and this chart can be applied.
+apiVersion: work.open-cluster-management.io/v1
+kind: ManifestWork
+metadata:
+  name: klusterlet-rbac-extensions
+  namespace: {{ $cluster.name }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+spec:
+  workload:
+    manifests:
+      - apiVersion: rbac.authorization.k8s.io/v1
+        kind: ClusterRole
+        metadata:
+          name: klusterlet-manifestwork-extensions
+        rules:
+          - apiGroups: ["operators.coreos.com"]
+            resources: ["catalogsources"]
+            verbs: ["create", "get", "list", "watch", "update", "patch", "delete"]
+          - apiGroups: ["submariner.io"]
+            resources: ["*"]
+            verbs: ["*"]
+          - apiGroups: ["multicluster.x-k8s.io"]
+            resources: ["*"]
+            verbs: ["*"]
+      - apiVersion: rbac.authorization.k8s.io/v1
+        kind: ClusterRoleBinding
+        metadata:
+          name: klusterlet-work-manifestwork-extensions
+        subjects:
+          - kind: ServiceAccount
+            name: klusterlet-work-sa
+            namespace: open-cluster-management-agent
+        roleRef:
+          kind: ClusterRole
+          name: klusterlet-manifestwork-extensions
+          apiGroup: rbac.authorization.k8s.io
+{{- end }}
