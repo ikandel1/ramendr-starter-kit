@@ -11,7 +11,7 @@ edgeGitopsVms:
 # clusterOverrides:
 #   primary:
 #     name: ocp-primary
-#     version: 4.21.1
+#     version: 4.21.6
 #     install_config:
 #       metadata:
 #         name: ocp-primary
@@ -56,7 +56,7 @@ regionalDR:
       primary:
         name: ocp-primary
         clusterGroup: resilient
-        version: 4.21.1
+        version: 4.21.6
         install_config:
           apiVersion: v1
           baseDomain: "{{ join \".\" (slice (splitList \".\" $.Values.global.clusterDomain) 1) }}"
@@ -94,7 +94,7 @@ regionalDR:
       secondary:
         name: ocp-secondary
         clusterGroup: resilient
-        version: 4.21.1
+        version: 4.21.6
         install_config:
           apiVersion: v1
           baseDomain: "{{ join \".\" (slice (splitList \".\" $.Values.global.clusterDomain) 1) }}"

@@ -14,7 +14,7 @@ to install two copies of this pattern into the same DNS domain.
 
 v1.1 - March 2026
 
-* Update managed cluster version from 4.18.7 to 4.21.1 (hub, primary, and secondary).
+* Update managed cluster version from 4.18.7 to 4.21.6 (hub, primary, and secondary).
 * Update ACM subscription channel from release-2.14 to release-2.16 (compatible with OCP 4.21).
 * Add explicit ODF channel stable-4.21 for odf-operator and odf-multicluster-orchestrator on hub and managed clusters.
 * Update OADP subscription channel from stable-1.4 to stable (tracks the single supported version for OCP 4.21, currently 1.7.x).
@@ -25,3 +25,9 @@ v1.1 - March 2026
   - Add a ManifestWork-based CatalogSource (redhat-operator-index:v4.20) on managed clusters
     to provide the submariner package, which is absent from redhat-operator-index:v4.21.
   - Configure SubmarinerConfig.subscriptionConfig to use this custom catalog source.
+* Fix VM startup failures on OCP 4.21:
+  - Update VM machineType from pc-q35-rhel8.4.0 to pc-q35-rhel9.4.0 (deprecated type triggers
+    DeprecatedMachineType alerts and may cause startup failures on 4.21).
+  - Add boot source readiness check in edge-gitops-vms-deploy script: waits up to 10 minutes
+    for the rhel9 DataSource in openshift-virtualization-os-images to become ready before
+    deploying VMs, preventing ErrorPvcNotFound / DataVolumeError states.

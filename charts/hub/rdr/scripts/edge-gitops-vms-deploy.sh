@@ -180,6 +180,52 @@ else
   fi
 fi
 
+# Step 0.5: Wait for RHEL 9 boot source to be ready
+# The DataSource 'rhel9' in openshift-virtualization-os-images must have a
+# ready PVC/snapshot before DataVolumes can clone it.  Without this check the
+# VMs are created but immediately enter ErrorPvcNotFound / DataVolumeError.
+echo ""
+echo "Step 0.5: Checking boot source readiness..."
+BOOT_SOURCE_NS="openshift-virtualization-os-images"
+BOOT_SOURCE_NAME="rhel9"
+BOOT_SOURCE_TIMEOUT=600   # 10 minutes
+BOOT_SOURCE_INTERVAL=15
+BOOT_SOURCE_ELAPSED=0
+BOOT_SOURCE_READY=false
+
+while [[ $BOOT_SOURCE_ELAPSED -lt $BOOT_SOURCE_TIMEOUT ]]; do
+  # Check if the DataSource exists and has a ready condition
+  DS_READY=$(oc get datasource "$BOOT_SOURCE_NAME" -n "$BOOT_SOURCE_NS" \
+    -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "")
+  if [[ "$DS_READY" == "True" ]]; then
+    BOOT_SOURCE_READY=true
+    echo "  ✅ Boot source DataSource $BOOT_SOURCE_NAME is ready"
+    break
+  fi
+
+  # Show current state for debugging
+  DS_EXISTS=$(oc get datasource "$BOOT_SOURCE_NAME" -n "$BOOT_SOURCE_NS" -o name 2>/dev/null || echo "")
+  if [[ -z "$DS_EXISTS" ]]; then
+    echo "  ⏳ DataSource $BOOT_SOURCE_NAME not found in $BOOT_SOURCE_NS yet (${BOOT_SOURCE_ELAPSED}s/${BOOT_SOURCE_TIMEOUT}s)..."
+  else
+    DS_MSG=$(oc get datasource "$BOOT_SOURCE_NAME" -n "$BOOT_SOURCE_NS" \
+      -o jsonpath='{.status.conditions[?(@.type=="Ready")].message}' 2>/dev/null || echo "unknown")
+    echo "  ⏳ DataSource $BOOT_SOURCE_NAME exists but not ready: $DS_MSG (${BOOT_SOURCE_ELAPSED}s/${BOOT_SOURCE_TIMEOUT}s)..."
+  fi
+
+  sleep "$BOOT_SOURCE_INTERVAL"
+  BOOT_SOURCE_ELAPSED=$((BOOT_SOURCE_ELAPSED + BOOT_SOURCE_INTERVAL))
+done
+
+if [[ "$BOOT_SOURCE_READY" != "true" ]]; then
+  echo "  ⚠️  Warning: Boot source $BOOT_SOURCE_NAME not ready after ${BOOT_SOURCE_TIMEOUT}s"
+  echo "  VMs may fail to start. Possible causes:"
+  echo "    - ODF StorageCluster not ready (no default storage class)"
+  echo "    - OpenShift Virtualization auto-import disabled"
+  echo "    - Network issue downloading golden image"
+  echo "  Proceeding anyway — VMs will retry once boot source becomes available."
+fi
+
 # Step 1: Check for helm and install if needed
 echo ""
 echo "Step 1: Checking for helm..."

@@ -7,7 +7,7 @@
 clusterOverrides:
   primary:
     name: ocp-primary
-    version: 4.21.1
+    version: 4.21.6
     install_config:
       metadata:
         name: ocp-primary
@@ -22,7 +22,7 @@ clusterOverrides:
           region: eu-north-1
   secondary:
     name: ocp-secondary
-    version: 4.21.1
+    version: 4.21.6
     install_config:
       metadata:
         name: ocp-secondary
