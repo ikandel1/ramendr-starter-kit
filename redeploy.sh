@@ -16,7 +16,7 @@ HUB_INSTALL_DIR="${HUB_INSTALL_DIR:-$HOME/git/hub-cluster-install}"
 VALUES_SECRET="${VALUES_SECRET:-$HOME/values-secret.yaml}"
 HOSTED_ZONE_ID="${HOSTED_ZONE_ID:-Z01653801KMZNKX9NGW6G}"
 BASE_DOMAIN="ecoengverticals-qe.devcluster.openshift.com"
-HUB_REGION="eu-north-1"
+HUB_REGION="eu-central-1"
 SECONDARY_REGION="eu-west-1"
 
 RED='\033[0;31m'
@@ -55,10 +55,10 @@ check_prerequisites() {
 
 cleanup_dns() {
     log "Cleaning stale DNS records from Route53..."
-    local records
-    records=$(aws route53 list-resource-record-sets --hosted-zone-id "$HOSTED_ZONE_ID" --output json 2>/dev/null)
     local stale
-    stale=$(echo "$records" | python3 -c "
+    stale=$(aws route53 list-resource-record-sets --hosted-zone-id "$HOSTED_ZONE_ID" \
+        --no-paginate --max-items 1000 --output json 2>/dev/null \
+    | python3 -c "
 import json, sys
 data = json.load(sys.stdin)
 base = '${BASE_DOMAIN}.'
@@ -66,14 +66,12 @@ changes = []
 for r in data.get('ResourceRecordSets', []):
     name = r['Name']
     rtype = r['Type']
-    # Delete A/AAAA records for any subdomain of the base domain (cluster API, ingress, etc.)
-    if rtype in ('A', 'AAAA') and name != base:
+    if rtype in ('SOA', 'NS'):
+        continue
+    # Delete A/AAAA/CNAME records for any subdomain (cluster API, ingress, VM services, etc.)
+    if rtype in ('A', 'AAAA', 'CNAME') and name != base:
         changes.append({'Action': 'DELETE', 'ResourceRecordSet': r})
-    # Delete TXT records created by the External DNS operator for managed cluster workloads.
-    # These are ownership records with names like:
-    #   external-dns-*.ocp-primary.<base_domain>.  (TXT)
-    #   external-dns-*.ocp-secondary.<base_domain>. (TXT)
-    # Leaving them behind causes openshift-install to abort with 'zone already has record sets'.
+    # Delete TXT records created by the External DNS operator
     elif rtype == 'TXT' and name != base and base in name:
         changes.append({'Action': 'DELETE', 'ResourceRecordSet': r})
 if changes:
