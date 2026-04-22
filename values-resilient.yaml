@@ -59,6 +59,9 @@ clusterGroup:
       - name: clean-golden-images
         playbook: ansible/odf_fix_dataimportcrons.yml
         verbosity: -vvv
+      - name: vm-add-data-disks
+        playbook: ansible/vm-add-data-disks.yml
+        verbosity: -vvv
     clusterRoleYaml:
       - apiGroups:
           - "*"
@@ -67,6 +70,8 @@ clusterGroup:
           - datavolumes
           - dataimportcrons
           - datasources
+          - virtualmachines
+          - virtualmachineinstances
         verbs:
           - "*"
       - apiGroups:
