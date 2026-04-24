@@ -112,7 +112,7 @@ clusterGroup:
       name: regional-dr
       namespace: regional-dr
       project: opp
-      repoURL: https://github.com/validatedpatterns/regionaldr-with-virt-chart.git
+      repoURL: https://github.com/elsapassaro/regionaldr-with-virt-chart.git
       chartVersion: main
       path: "."
       annotations:
