@@ -37,3 +37,10 @@ v1.1 - March 2026 (this fork, historical)
   main and aligned to OCP 4.20.x. Deployment notes: Submariner gateway m5.large + custom catalog for 4.21;
   KubeVirt VM machineType and boot-source waits; c5.metal for KVM; primary region eu-central-1; klusterlet
   CatalogSource/Submariner RBAC. See git history on branch main before the upstream merge for file-level detail.
+
+Tooling (this fork, post–upstream merge)
+
+* `redeploy.sh` pins the hub to OCP 4.20.6: sets `OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE` to
+  `quay.io/openshift-release-dev/ocp-release:4.20.6-x86_64` (override with `HUB_OCP_VERSION` or that env)
+  so a 4.21+ `openshift-install` on `PATH` does not provision a 4.21 hub when spokes are 4.20.6 in
+  `overrides/values-cluster-names.yaml` (same issue Martin/Elsa called out for mixed 4.20/4.21).

@@ -18,6 +18,13 @@ HOSTED_ZONE_ID="${HOSTED_ZONE_ID:-Z01653801KMZNKX9NGW6G}"
 BASE_DOMAIN="ecoengverticals-qe.devcluster.openshift.com"
 HUB_REGION="eu-central-1"
 SECONDARY_REGION="eu-west-1"
+# OpenShift z-stream for the hub. Must match managed clusters in overrides/values-cluster-names.yaml
+# (e.g. 4.20.6) so a 4.21+ openshift-install on PATH does not build a 4.21 hub against 4.20 spokes.
+# install_hub exports OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE to pin the payload; override the env
+# or HUB_OCP_VERSION if you use a mirror or a different z-stream.
+HUB_OCP_VERSION="${HUB_OCP_VERSION:-4.20.6}"
+HUB_DEFAULT_RELEASE_IMAGE="quay.io/openshift-release-dev/ocp-release:${HUB_OCP_VERSION}-x86_64"
+hub_release_image() { echo "${OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE:-$HUB_DEFAULT_RELEASE_IMAGE}"; }
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -49,8 +56,17 @@ check_prerequisites() {
         warn "Podman machine not running. Starting..."
         podman machine start 2>/dev/null || true
     fi
+    if [[ -n "$(openshift-install version 2>/dev/null | head -1 || true)" ]]; then
+        local oi_vers
+        oi_vers=$(openshift-install version 2>/dev/null | head -1)
+        if ! echo "$oi_vers" | grep -qE 'openshift-install[[:space:]]+4\.20\.'; then
+            warn "Your openshift-install is not 4.20.x: $oi_vers"
+            warn "Hub payload is pinned to $(hub_release_image) (HUB_OCP_VERSION=${HUB_OCP_VERSION}) so the hub matches 4.20 spokes; a 4.20.x installer is still recommended for supportability."
+        fi
+    fi
     [[ $missing -eq 1 ]] && { err "Prerequisites not met. Aborting."; exit 1; }
     log "All prerequisites met."
+    log "Hub OCP: ${HUB_OCP_VERSION}  Release image: $(hub_release_image)"
 }
 
 cleanup_dns() {
@@ -118,6 +134,8 @@ destroy_hub() {
 
 install_hub() {
     log "Preparing hub cluster install directory..."
+    export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="$(hub_release_image)"
+    log "Hub release payload: ${OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE}  (HUB_OCP_VERSION=${HUB_OCP_VERSION})"
     cd "$HUB_INSTALL_DIR"
     setopt +o nomatch 2>/dev/null || true
     rm -rf .clusterapi_output .openshift_install.log .openshift_install_state.json \
@@ -294,6 +312,8 @@ case "${1:-}" in
         echo "  HUB_INSTALL_DIR  Hub cluster install directory (default: ~/git/hub-cluster-install)"
         echo "  VALUES_SECRET    Path to values-secret.yaml (default: ~/values-secret.yaml)"
         echo "  HOSTED_ZONE_ID   Route53 hosted zone ID (default: Z01653801KMZNKX9NGW6G)"
+        echo "  HUB_OCP_VERSION  Hub OCP z-stream, must match spoke versions (default: 4.20.6)"
+        echo "  OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE  Release payload; defaults from HUB_OCP_VERSION"
         ;;
     *)
         full_redeploy
