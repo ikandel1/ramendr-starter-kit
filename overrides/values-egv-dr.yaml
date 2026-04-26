@@ -2,6 +2,11 @@
 disableExternalSecrets: true
 waitForMetalNode: false
 
+# Use the forked edge-gitops-vms-chart which adds native extraDisks support.
+edgeGitopsVms:
+  chartVersion: "0.4.1"
+  chartUrl: "https://github.com/elsapassaro/edge-gitops-vms-chart/releases/download/v0.4.1/edge-gitops-vms-0.4.1.tgz"
+
 vmDefaults:
   accessMode: "ReadWriteMany"
   storageClassName: "ocs-storagecluster-ceph-rbd-virtualization"
@@ -35,3 +40,46 @@ vms:
   edgenode:
     count: 4
     role: node
+    # Second blank data disk, provisioned at VM creation time via dataVolumeTemplates.
+    # CDI provisions it before Ramen starts watching the namespace, eliminating
+    # the prime-* staging PVC race condition that occurs with hot-plug additions.
+    extraDisks:
+      - name: data
+        size: 20Gi
+
+  # Windows Server 2022 VM — requires a Windows image in a container registry.
+  # The DataVolume (50 Gi) is pulled once and stored in ODF; subsequent VMs
+  # clone from that DataSource so the image is only downloaded once per cluster.
+  # Set count: 0 to disable without removing the configuration.
+  #
+  # windows:
+  #   count: 1
+  #   role: desktop
+  #   os: windows2k22
+  #   dataSource: windows2k22        # references externalDataSources below
+  #   efi: true                      # Windows requires UEFI boot
+  #   mainDiskStorageBus: sata       # virtio disk driver not available on bare Windows
+  #   storage: 50Gi
+  #   memory: 8Gi
+  #   cores: 2
+  #   template: windows2k22-server-medium
+  #   ports:
+  #     - name: rdp
+  #       port: 3389
+  #       protocol: TCP
+  #       targetPort: 3389
+
+# Uncomment once you have a Windows container image available in a registry
+# and have added the privatevm-credentials secret to ~/values-secret.yaml.
+#
+# externalDataSources:
+#   windows2k22:
+#     name: windows2k22
+#     type: registry
+#     url: 'docker://<YOUR_REGISTRY>/<YOUR_WINDOWS_IMAGE>:<TAG>'
+#     registryCredentialsSecret: windows-registry-creds
+#     size: 50G
+#
+# registryCredentialExternalSecrets:
+#   windows-registry-creds:
+#     vaultKey: secret/data/global/privatevm-credentials

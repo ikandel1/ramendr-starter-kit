@@ -33,21 +33,23 @@ If you're joining this project, here's what you need to get the full environment
 
 4. **Fork the repo** → [github.com/validatedpatterns/ramendr-starter-kit/fork](https://github.com/validatedpatterns/ramendr-starter-kit/fork)
 
-5. **Clone, configure, and deploy** (takes ~2-3 hours, mostly unattended):
+5. **Clone, configure, and deploy** (takes ~2 hours unattended in BYOC mode):
    ```bash
    git clone https://github.com/<YOUR_USER>/ramendr-starter-kit.git
    cd ramendr-starter-kit
    ```
-   Then follow [Step-by-Step Deployment](#step-by-step-deployment) below, or if a hub `install-config.yaml.bak` already exists at `~/git/hub-cluster-install/`, you can run:
+   Then follow [Step-by-Step Deployment](#step-by-step-deployment) below, or if `install-config.yaml.bak` files already exist for all three clusters, you can run:
    ```bash
    ./redeploy.sh
    ```
+   The script will provision all three clusters **in parallel**, then deploy the pattern.
 
 6. **Important gotchas** (read these before deploying!):
    - Always use `VALUES_SECRET=~/values-secret.yaml` when running `./pattern.sh make install`
    - Download the **amd64** `openshift-install` binary, even on Apple Silicon Macs
-   - Request AWS EIP quota increase to 15 in your primary region (`eu-central-1`) **before** deploying
+   - Request AWS EIP quota increase to **15** in `eu-central-1` and **10** in `eu-west-1` **before** deploying
    - Hub needs **6 workers** (not 3) — the redeploy script handles this automatically
+   - Create `install-config.yaml.bak` for **all three** clusters (hub + primary + secondary) before running `./redeploy.sh`
    - Clusters on `devcluster.openshift.com` are **auto-destroyed** after a few days — use `./redeploy.sh` to rebuild
 
 ---
@@ -58,12 +60,14 @@ The pattern deploys **3 OpenShift clusters** on AWS:
 
 | Cluster | Role | AWS Region | Purpose |
 |---|---|---|---|
-| **hub** | Management | `eu-central-1` | Runs ACM, ArgoCD, Vault, ODF Multicluster Orchestrator |
+| **hub** | Management | `eu-north-1` | Runs ACM, ArgoCD, Vault, ODF Multicluster Orchestrator |
 | **ocp-primary** | Managed | `eu-central-1` | Runs VMs, ODF storage, primary DR site |
 | **ocp-secondary** | Managed | `eu-west-1` | Runs ODF storage, secondary DR site (failover target) |
 
+> **BYOC mode (v1.1+):** All three clusters are provisioned **in parallel** using `openshift-install` and independent install directories. The hub imports the spoke clusters via their kubeconfigs (`byoc: true` in `overrides/values-cluster-names.yaml`), bypassing Hive-based provisioning. This reduces total deployment time by ~50% and eliminates Hive as a dependency for spoke lifecycle management.
+
 Key components installed by the pattern:
-- **Red Hat ACM** — multi-cluster management, provisions managed clusters via Hive
+- **Red Hat ACM** — multi-cluster management, imports pre-provisioned spoke clusters via BYOC kubeconfigs
 - **OpenShift Data Foundations (ODF)** — Ceph storage with cross-cluster replication
 - **ODF Multicluster Orchestrator** — manages DR policies across clusters
 - **OpenShift Virtualization (KubeVirt)** — runs VMs on managed clusters
@@ -72,15 +76,15 @@ Key components installed by the pattern:
 - **External Secrets Operator** — syncs secrets from Vault to Kubernetes
 - **Red Hat OpenShift GitOps (ArgoCD)** — GitOps-based deployment
 
-### Bare-Metal Worker Requirement (c5.metal)
+### Bare-Metal Worker Requirement (c5n.metal)
 
 OpenShift Virtualization (KubeVirt) requires `/dev/kvm` on worker nodes to schedule VMs. Standard EC2 instance types — including m5, m8i, c5, r5, and their variants — run on the AWS Nitro hypervisor and **do not** expose the `vmx`/`svm` CPU flags needed for KVM. As a result, `virt-handler` reports `devices.kubevirt.io/kvm: 0` on those nodes and VMs fail with `ErrorUnschedulable`.
 
-The solution is to provision at least **one bare-metal EC2 instance** (e.g. `c5.metal`) on each managed cluster. Bare-metal instances provide direct hardware access with full KVM support. The pattern creates a dedicated MachineSet with the `node-role.kubernetes.io/metal` label on both `ocp-primary` and `ocp-secondary` clusters.
+OCP `install-config.yaml` does not support two compute pools with the same `name: worker`, so the `c5n.metal` node cannot be declared alongside the `m8i.4xlarge` workers at install time. Instead, `redeploy.sh` adds it post-install by cloning the first existing worker MachineSet and overriding the instance type to `c5n.metal` with a 300 GiB root disk (to avoid ODF disk-pressure evictions).
 
 **Both clusters need a metal node:** VMs initially run on the primary cluster, but during a DR failover they must start on the secondary cluster. Without a metal node there, failover will fail with the same `ErrorUnschedulable` error.
 
-> **Cost note:** `c5.metal`/`c5n.metal` instances are significantly more expensive than standard workers. Keep metal replicas at 0 when the environment is idle and scale to 1 only when testing KubeVirt VMs or DR failover.
+> **Cost note:** `c5n.metal` instances are significantly more expensive than standard workers. The `redeploy.sh` script handles creation automatically — no manual MachineSet work is needed.
 
 ---
 
@@ -116,7 +120,7 @@ You will need:
 Download the **amd64 (x86_64)** version even on Apple Silicon Macs — the clusters run x86 instances:
 
 ```bash
-# Download amd64 version for OCP 4.20 (use the same minor as hub / managed clusters, e.g. 4.20.6)
+# Download amd64 version for OCP 4.20
 curl -L -o /tmp/openshift-install.tar.gz \
   "https://mirror.openshift.com/pub/openshift-v4/clients/ocp/stable-4.20/openshift-install-mac-amd64.tar.gz"
 
@@ -181,7 +185,7 @@ networking:
     - 172.30.0.0/16
 platform:
   aws:
-    region: eu-central-1
+    region: eu-north-1
     userTags:
       project: ValidatedPatterns
 publish: External
@@ -218,6 +222,36 @@ cp ~/git/hub-cluster-install/auth/kubeconfig ~/.kube/config
 chmod 600 ~/.kube/config
 ```
 
+### Step 1b: Provision Spoke Clusters in Parallel (BYOC)
+
+While the hub is installing (or after it completes), provision both spoke clusters **simultaneously** using their own `install-config.yaml.bak` files (created in Step 3b below). Open two separate terminal sessions:
+
+```bash
+# Terminal 1 — ocp-primary
+mkdir -p ~/git/ocp-primary-install
+cp ~/git/ocp-primary-install/install-config.yaml.bak \
+   ~/git/ocp-primary-install/install-config.yaml
+openshift-install create cluster \
+  --dir=~/git/ocp-primary-install --log-level=info
+```
+
+```bash
+# Terminal 2 — ocp-secondary
+mkdir -p ~/git/ocp-secondary-install
+cp ~/git/ocp-secondary-install/install-config.yaml.bak \
+   ~/git/ocp-secondary-install/install-config.yaml
+openshift-install create cluster \
+  --dir=~/git/ocp-secondary-install --log-level=info
+```
+
+> **Why parallel?** All three `openshift-install` runs can proceed concurrently — they use independent AWS accounts/regions and install directories. Running in parallel cuts provisioning time from ~2.5 hours (sequential) to ~60-75 minutes.
+
+Once both spoke installs complete, their kubeconfigs will be at:
+- `~/git/ocp-primary-install/auth/kubeconfig`
+- `~/git/ocp-secondary-install/auth/kubeconfig`
+
+These paths must match what is configured in `~/values-secret.yaml` (see Step 4).
+
 ### Step 2: Fork and Clone the Repository
 
 1. Go to [https://github.com/validatedpatterns/ramendr-starter-kit/fork](https://github.com/validatedpatterns/ramendr-starter-kit/fork)
@@ -245,36 +279,149 @@ git remote -v
 # upstream  https://github.com/validatedpatterns/ramendr-starter-kit.git (push)
 ```
 
-### Step 3: Customize AWS Regions
+### Step 3: Configure Spoke Cluster Names, Regions, and BYOC Mode
 
-Edit `charts/hub/rdr/values.yaml` and update the `region` fields for your primary and secondary clusters:
-
-```yaml
-# Primary cluster (line ~41)
-platform:
-  aws:
-    region: eu-central-1  # <-- Change to your primary region
-
-# Secondary cluster (line ~79)
-platform:
-  aws:
-    region: eu-west-1     # <-- Change to your secondary region (must be different!)
-```
-
-> **Important:** The two managed clusters MUST be in different AWS regions for regional DR to work.
-
-### Step 3b: Add Cost Attribution Tags (Recommended)
-
-Edit your override values and set the owner/environment tags so every launched AWS resource is attributable:
+In this repository the cluster-provisioning configuration is stored in `overrides/values-cluster-names.yaml` (not in the externalized chart values). Edit that file to set your cluster names, regions, OCP version, and enable BYOC mode:
 
 ```yaml
-costManagement:
-  ownerTag: your-user-or-team
-  launchedByTag: automation-user
-  environmentTag: dev
+clusterGroup:
+  managedClusterGroups:
+    - name: region-one
+      clusterSelector:
+        matchLabels:
+          clusterGroup: region-one
+      clusters:
+        - name: ocp-primary
+          region: eu-central-1   # Frankfurt — change if needed
+          ocpVersion: "4.20"
+          byoc: true             # BYOC: hub imports this cluster via kubeconfig
+    - name: region-two
+      clusterSelector:
+        matchLabels:
+          clusterGroup: region-two
+      clusters:
+        - name: ocp-secondary
+          region: eu-west-1      # Ireland — must differ from primary!
+          ocpVersion: "4.20"
+          byoc: true             # BYOC: hub imports this cluster via kubeconfig
 ```
 
-These values are injected into managed cluster `install-config` as AWS `userTags`.
+> **Important:** The two managed clusters MUST be in **different** AWS regions for regional DR to work.
+
+### Step 3b: Create `install-config.yaml.bak` for Spoke Clusters
+
+In BYOC mode the spokes are provisioned independently with `openshift-install`. Create one install directory per spoke:
+
+```bash
+# --- ocp-primary (Frankfurt, eu-central-1) ---
+mkdir -p ~/git/ocp-primary-install
+cat > ~/git/ocp-primary-install/install-config.yaml.bak << 'EOF'
+apiVersion: v1
+baseDomain: <YOUR_BASE_DOMAIN>
+metadata:
+  name: ocp-primary
+controlPlane:
+  name: master
+  replicas: 3
+  platform:
+    aws:
+      type: m5.2xlarge
+compute:
+  - name: worker
+    replicas: 2
+    platform:
+      aws:
+        type: m8i.4xlarge
+  - name: worker
+    replicas: 1
+    platform:
+      aws:
+        type: c5n.metal
+        rootVolume:
+          iops: 3000
+          size: 300
+          type: gp3
+networking:
+  clusterNetwork:
+    - cidr: 10.132.0.0/14
+      hostPrefix: 23
+  machineNetwork:
+    - cidr: 10.1.0.0/16
+  networkType: OVNKubernetes
+  serviceNetwork:
+    - 172.31.0.0/16
+platform:
+  aws:
+    region: eu-central-1
+    userTags:
+      project: ValidatedPatterns
+      owner: <YOUR_USERNAME>
+      environment: dev
+publish: External
+sshKey: "<YOUR_SSH_PUBLIC_KEY>"
+pullSecret: '<YOUR_PULL_SECRET_JSON>'
+EOF
+
+# --- ocp-secondary (Ireland, eu-west-1) ---
+mkdir -p ~/git/ocp-secondary-install
+cat > ~/git/ocp-secondary-install/install-config.yaml.bak << 'EOF'
+apiVersion: v1
+baseDomain: <YOUR_BASE_DOMAIN>
+metadata:
+  name: ocp-secondary
+controlPlane:
+  name: master
+  replicas: 3
+  platform:
+    aws:
+      type: m5.2xlarge
+compute:
+  - name: worker
+    replicas: 2
+    platform:
+      aws:
+        type: m8i.4xlarge
+  - name: worker
+    replicas: 1
+    platform:
+      aws:
+        type: c5n.metal
+        rootVolume:
+          iops: 3000
+          size: 300
+          type: gp3
+networking:
+  clusterNetwork:
+    - cidr: 10.136.0.0/14
+      hostPrefix: 23
+  machineNetwork:
+    - cidr: 10.2.0.0/16
+  networkType: OVNKubernetes
+  serviceNetwork:
+    - 172.21.0.0/16
+platform:
+  aws:
+    region: eu-west-1
+    userTags:
+      project: ValidatedPatterns
+      owner: <YOUR_USERNAME>
+      environment: dev
+publish: External
+sshKey: "<YOUR_SSH_PUBLIC_KEY>"
+pullSecret: '<YOUR_PULL_SECRET_JSON>'
+EOF
+```
+
+> **Key points:**
+> - Use **non-overlapping** CIDRs across all three clusters (hub, primary, secondary) — they must be reachable to each other via Submariner.
+> - The spoke clusters start with 2× `m8i.4xlarge` workers. `redeploy.sh` adds a `c5n.metal` node post-install via a MachineSet (bare-metal, required for `/dev/kvm` and KubeVirt VMs, with a 300 GiB root disk to prevent ODF disk-pressure evictions).
+> - The `install-config.yaml.bak` is the source of truth; `openshift-install` consumes and deletes the `.yaml` copy, leaving only `.bak` for re-runs.
+
+### Step 3c: Add Cost Attribution Tags (Recommended)
+
+For stable non-spot deployments simply ensure the `userTags` in each `install-config.yaml.bak` include your `owner`, `project`, and `environment` tags (as shown above).
+
+For cost-optimized dev/test environments with spot bare-metal workers, see `overrides/values-aws-cost-optimized.yaml` — but note that in BYOC mode instance type configuration is done directly in the `install-config.yaml.bak` files.
 
 ### Step 4: Create the Secrets File
 
@@ -333,15 +480,27 @@ secrets:
     fields:
       - name: .dockerconfigjson
         path: ~/pull_secret.json          # Or use value: '<json>'
+
+  # BYOC: kubeconfigs for the spoke clusters provisioned externally.
+  # These are loaded into Vault so the hub can import the clusters.
+  - name: ocp-primary-kubeconfig
+    fields:
+      - name: kubeconfig
+        path: ~/git/ocp-primary-install/auth/kubeconfig
+
+  - name: ocp-secondary-kubeconfig
+    fields:
+      - name: kubeconfig
+        path: ~/git/ocp-secondary-install/auth/kubeconfig
 ```
 
-> **Tip:** You can use either `path:` (points to a file) or `value:` (inline content) for each field. Using `path:` is cleaner for large values like pull secrets and SSH keys.
+> **Tip:** You can use either `path:` (points to a file) or `value:` (inline content) for each field. Using `path:` is cleaner for large values like pull secrets and SSH keys. The kubeconfig entries must be populated **after** the spoke clusters are provisioned (Step 1b below), before running `./pattern.sh make install`.
 
 ### Step 5: Commit and Push
 
 ```bash
-git add charts/hub/rdr/values.yaml
-git commit -m "Update AWS regions for our deployment"
+git add overrides/values-cluster-names.yaml
+git commit -m "Enable BYOC mode for spoke clusters"
 git push origin main
 ```
 
@@ -392,120 +551,43 @@ oc get pattern ramendr-starter-kit -n openshift-operators \
   -o jsonpath='{range .status.applications[*]}{.name}{"\t"}{.syncStatus}{"\t"}{.healthStatus}{"\n"}{end}'
 ```
 
-**Check managed clusters:**
+**Check managed clusters (BYOC — no ClusterDeployments):**
 ```bash
 oc get managedclusters
-oc get clusterdeployments -A
+# Both ocp-primary and ocp-secondary should appear as JOINED=True, AVAILABLE=True
+# shortly after the pattern loads their kubeconfigs from Vault.
 ```
 
-Expected deployment timeline:
+Expected deployment timeline (BYOC parallel mode):
 | Phase | Duration | What Happens |
 |---|---|---|
+| 0. Parallel cluster installs | ~60-75 min | Hub + primary + secondary all running `openshift-install` simultaneously |
 | 1. Operators install on hub | ~15 min | ACM, ODF, GitOps, Vault |
-| 2. Managed clusters provisioned | ~45-60 min | Hive creates ocp-primary and ocp-secondary |
-| 3. Add metal workers | ~15-20 min | Create c5.metal MachineSet on each managed cluster, wait for node Ready |
-| 4. Operators install on managed clusters | ~30-45 min | ODF, KubeVirt, Submariner |
-| 5. Storage + DR configured | ~15-20 min | ODF mirroring, DRPolicy |
-| 6. VMs deployed | ~10-15 min | 4 RHEL9 VMs on primary (scheduled on metal node) |
+| 2. Spokes imported via BYOC | ~5-10 min | Hub reads kubeconfigs from Vault and imports managed clusters |
+| 3. Operators install on managed clusters | ~30-45 min | ODF, KubeVirt, Submariner |
+| 4. Storage + DR configured | ~15-20 min | ODF mirroring, DRPolicy, MirrorPeer |
+| 5. VMs deployed | ~10-15 min | 4 RHEL9 VMs on primary (scheduled on c5n.metal node) |
 
-### Step 9: Add Bare-Metal Workers for KubeVirt
+> With BYOC the total time is approximately **2 hours** end-to-end, compared to ~3 hours with sequential Hive-based provisioning.
 
-After both managed clusters are provisioned and joined, add a `c5.metal` MachineSet to each. Without bare-metal workers, VMs will fail with `ErrorUnschedulable` because standard EC2 instances lack KVM support.
+### Step 9: Verify Bare-Metal Workers for KubeVirt
 
-Run this for each managed cluster (replace the variables for the secondary cluster):
+`redeploy.sh` automatically creates a `c5n.metal` MachineSet on each spoke immediately after installation and waits for the node to become Ready before deploying the pattern. No manual action is needed.
 
-```bash
-# Get the managed cluster's kubeconfig
-CLUSTER_NS="ocp-primary"   # then repeat for ocp-secondary
-KC_SECRET=$(oc get secrets -n $CLUSTER_NS -o name | grep admin-kubeconfig | head -1)
-oc get $KC_SECRET -n $CLUSTER_NS -o jsonpath='{.data.kubeconfig}' | base64 -d > /tmp/${CLUSTER_NS}-kc.yaml
-export KUBECONFIG=/tmp/${CLUSTER_NS}-kc.yaml
-
-# Discover cluster infrastructure details
-INFRA_ID=$(oc get infrastructure cluster -o jsonpath='{.status.infrastructureName}')
-REGION=$(oc get infrastructure cluster -o jsonpath='{.status.platformStatus.aws.region}')
-WORKER_MS=$(oc get machineset -n openshift-machine-api -o name | grep worker | head -1)
-AZ=$(oc get $WORKER_MS -n openshift-machine-api -o jsonpath='{.spec.template.spec.providerSpec.value.placement.availabilityZone}')
-AMI=$(oc get $WORKER_MS -n openshift-machine-api -o jsonpath='{.spec.template.spec.providerSpec.value.ami.id}')
-
-# Create the c5.metal MachineSet
-cat <<EOF | oc apply -f -
-apiVersion: machine.openshift.io/v1beta1
-kind: MachineSet
-metadata:
-  name: ${INFRA_ID}-metal-${AZ}
-  namespace: openshift-machine-api
-  labels:
-    machine.openshift.io/cluster-api-cluster: ${INFRA_ID}
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      machine.openshift.io/cluster-api-cluster: ${INFRA_ID}
-      machine.openshift.io/cluster-api-machineset: ${INFRA_ID}-metal-${AZ}
-  template:
-    metadata:
-      labels:
-        machine.openshift.io/cluster-api-cluster: ${INFRA_ID}
-        machine.openshift.io/cluster-api-machine-role: worker
-        machine.openshift.io/cluster-api-machine-type: worker
-        machine.openshift.io/cluster-api-machineset: ${INFRA_ID}-metal-${AZ}
-    spec:
-      metadata:
-        labels:
-          node-role.kubernetes.io/worker: ""
-          node-role.kubernetes.io/metal: ""
-      providerSpec:
-        value:
-          apiVersion: machine.openshift.io/v1beta1
-          kind: AWSMachineProviderConfig
-          ami:
-            id: ${AMI}
-          instanceType: c5.metal
-          placement:
-            availabilityZone: ${AZ}
-            region: ${REGION}
-          subnet:
-            filters:
-              - name: tag:Name
-                values:
-                  - ${INFRA_ID}-subnet-private-${AZ}
-          securityGroups:
-            - filters:
-                - name: tag:Name
-                  values:
-                    - ${INFRA_ID}-node
-          iamInstanceProfile:
-            id: ${INFRA_ID}-worker-profile
-          blockDevices:
-            - ebs:
-                volumeSize: 120
-                volumeType: gp3
-          credentialsSecret:
-            name: aws-cloud-credentials
-          userDataSecret:
-            name: worker-user-data
-EOF
-```
-
-Wait 15-20 minutes for the bare-metal instance to boot and join:
+To verify the node is Ready and KVM is exposed:
 
 ```bash
-oc get machineset -n openshift-machine-api | grep metal
-# Wait until READY=1 and AVAILABLE=1
+# Check on ocp-primary
+export KUBECONFIG=~/git/ocp-primary-install/auth/kubeconfig
 
-oc get nodes -l node-role.kubernetes.io/metal=
+oc get nodes -l node.kubernetes.io/instance-type=c5n.metal
 # Should show a Ready node
-```
 
-Verify KVM is available:
-
-```bash
 oc get node <metal-node-name> -o jsonpath='{.status.allocatable.devices\.kubevirt\.io/kvm}'
 # Should show "1k"
 ```
 
-Repeat the entire process for `ocp-secondary` before testing DR failover.
+Repeat for `ocp-secondary` before testing DR failover.
 
 ### Step 10: Verify the Deployment
 
@@ -636,12 +718,12 @@ openshift-install destroy cluster --dir=~/git/hub-cluster-install --log-level=in
 | Pattern points to wrong git repo | `oc patch pattern ramendr-starter-kit -n openshift-operators --type merge -p '{"spec":{"gitSpec":{"targetRepo":"https://github.com/<USER>/ramendr-starter-kit.git"}}}'` |
 | `openshift-install` fails with architecture mismatch | Download the **amd64** version of the installer (not ARM64) |
 | Vault secrets not loading (retrying) | Check vault pod: `oc get pods -n vault`, check status: `oc exec -n vault vault-0 -- vault status` |
-| Managed clusters not provisioning | Check ACM is healthy: `oc get csv -n open-cluster-management`, check Hive: `oc get clusterdeployments -A` |
+| Managed clusters not imported (BYOC) | Check kubeconfig secrets exist in Vault (`oc exec -n vault vault-0 -- vault kv get secret/hub/ocp-primary-kubeconfig`) and that `values-secret.yaml` paths point to the correct auth directories |
 | Managed cluster provision fails with `AddressLimitExceeded` | Increase EIP quota: `aws service-quotas request-service-quota-increase --service-code ec2 --quota-code L-0263D0A3 --desired-value 15 --region <REGION>` |
 | Hub ODF pods stuck Pending (`Insufficient cpu`) | Scale hub worker MachineSets: `oc scale machineset <name> -n openshift-machine-api --replicas=2` for each AZ |
 | New hub workers missing ODF label | Label nodes: `oc label node <NODE> cluster.ocs.openshift.io/openshift-storage=""` |
-| VMs stuck in `ErrorUnschedulable` (Insufficient `devices.kubevirt.io/kvm`) | Standard EC2 instances lack KVM. Add a `c5.metal` MachineSet — see [Step 9](#step-9-add-bare-metal-workers-for-kubevirt) |
-| Metal MachineSet stuck in `Provisioned` for >15 min | Bare-metal instances take 15-20 min to boot. Check CSRs: `oc get csr`; approve any pending with `oc adm certificate approve <name>` |
+| VMs stuck in `ErrorUnschedulable` (Insufficient `devices.kubevirt.io/kvm`) | Standard EC2 instances lack KVM. `redeploy.sh` adds a `c5n.metal` MachineSet automatically — verify with `oc get nodes -l node.kubernetes.io/instance-type=c5n.metal` |
+| `c5n.metal` node not Ready after 20 min | Bare-metal instances take 15-20 min to boot. Check CSRs: `oc get csr`; approve any pending with `oc adm certificate approve <name>` |
 | ExternalSecrets can't find `secret/hub/privatekey` | Create it in Vault: `oc exec -n vault vault-0 -- vault kv put secret/hub/privatekey privatekey="$(cat ~/.ssh/id_ed25519)"` |
 | `regional-dr` stuck on prerequisites checker | Manually create the Job if ArgoCD sync is deadlocked: `oc apply -f` the Job manifest from `charts/hub/rdr/templates/job-odf-dr-prerequisites.yaml` |
 | Managed cluster shows `ProvisionStopped` but is actually running | If the cluster API is reachable, patch the CD: `oc patch clusterdeployment <name> -n <ns> --type merge -p '{"spec":{"installed":true,"clusterMetadata":{...}}}'` |
@@ -652,18 +734,17 @@ Each OpenShift cluster uses **3 Elastic IPs** (one per availability zone for NAT
 
 | Region | Clusters | EIPs Needed | Recommended Quota |
 |---|---|---|---|
-| `eu-central-1` | hub + ocp-primary | 6 | 15 |
+| `eu-north-1` | hub | 3 | 10 |
+| `eu-central-1` | ocp-primary | 3 | 10 |
 | `eu-west-1` | ocp-secondary | 3 | 10 |
 
 Request increases **before** deploying:
 ```bash
-aws service-quotas request-service-quota-increase \
-  --service-code ec2 --quota-code L-0263D0A3 \
-  --desired-value 15 --region eu-central-1
-
-aws service-quotas request-service-quota-increase \
-  --service-code ec2 --quota-code L-0263D0A3 \
-  --desired-value 10 --region eu-west-1
+for region in eu-north-1 eu-central-1 eu-west-1; do
+  aws service-quotas request-service-quota-increase \
+    --service-code ec2 --quota-code L-0263D0A3 \
+    --desired-value 10 --region $region
+done
 ```
 
 ### Hub Cluster Sizing Note
@@ -692,11 +773,11 @@ done
 
 | Cluster | Name | Region | Instance Types | Notes |
 |---|---|---|---|---|
-| Hub | `hub` | `eu-central-1` | 3x `m5.4xlarge` masters, 6x `m5.2xlarge` workers | Runs ACM, ArgoCD, Vault, ODF orchestrator |
-| Primary | `ocp-primary` | `eu-central-1` | 3x `m5.4xlarge` masters, 3x `m8i.4xlarge` + 1x `c5.metal` workers | Runs VMs (on metal node), primary DR site |
-| Secondary | `ocp-secondary` | `eu-west-1` | 3x `m5.4xlarge` masters, 3x `m8i.4xlarge` + 1x `c5.metal` workers | Secondary DR site (failover target), metal node needed for failover VMs |
+| Hub | `hub` | `eu-north-1` | 3x `m5.2xlarge` masters, 6x `m5.xlarge` workers | Runs ACM, ArgoCD, Vault, ODF orchestrator |
+| Primary | `ocp-primary` | `eu-central-1` | 3x `m5.2xlarge` masters, 2x `m8i.4xlarge` workers + 1x `c5n.metal` (added post-install via MachineSet) | Runs VMs (on metal node), primary DR site |
+| Secondary | `ocp-secondary` | `eu-west-1` | 3x `m5.2xlarge` masters, 2x `m8i.4xlarge` workers + 1x `c5n.metal` (added post-install via MachineSet) | Secondary DR site (failover target), metal node needed for failover VMs |
 
-### Networking (configured in `charts/hub/rdr/values.yaml`)
+### Networking (configured in `overrides/values-cluster-names.yaml` and spoke `install-config.yaml.bak`)
 
 | Cluster | Service CIDR | Cluster CIDR | Machine CIDR |
 |---|---|---|---|
@@ -758,8 +839,14 @@ oc get secret -n ocp-secondary $(oc get secrets -n ocp-secondary -o name | grep 
 |---|---|
 | `~/.aws/credentials` | AWS Access Key ID + Secret Access Key |
 | `~/values-secret.yaml` | Real secrets file (never commit!) |
+| `~/git/hub-cluster-install/install-config.yaml.bak` | Hub install config (source of truth) |
 | `~/git/hub-cluster-install/auth/kubeconfig` | Hub cluster kubeconfig |
 | `~/git/hub-cluster-install/auth/kubeadmin-password` | Hub admin password |
+| `~/git/ocp-primary-install/install-config.yaml.bak` | ocp-primary install config (BYOC) |
+| `~/git/ocp-primary-install/auth/kubeconfig` | ocp-primary kubeconfig (loaded into Vault for BYOC import) |
+| `~/git/ocp-secondary-install/install-config.yaml.bak` | ocp-secondary install config (BYOC) |
+| `~/git/ocp-secondary-install/auth/kubeconfig` | ocp-secondary kubeconfig (loaded into Vault for BYOC import) |
+| `overrides/values-cluster-names.yaml` | Cluster names, regions, OCP versions, byoc: true flags |
 
 ### ArgoCD Application Status (Final)
 
@@ -780,26 +867,26 @@ oc get secret -n ocp-secondary $(oc get secrets -n ocp-secondary -o name | grep 
 | Operator | Version |
 |---|---|
 | Validated Patterns Operator | 0.0.65 |
-| OpenShift GitOps (ArgoCD) | 1.21.x |
-| Advanced Cluster Management | 2.16.x |
-| ODF Multicluster Orchestrator | 4.21.x |
-| ODF Operator | 4.21.x |
-| ODR Hub Operator | 4.21.x |
+| OpenShift GitOps (ArgoCD) | 1.14.x |
+| Advanced Cluster Management | 2.12.x |
+| ODF Multicluster Orchestrator | 4.20.x |
+| ODF Operator | 4.20.x |
+| ODR Hub Operator | 4.20.x |
 
 #### Managed Clusters (both primary and secondary)
 
 | Operator | Version |
 |---|---|
-| OpenShift Virtualization (KubeVirt) | 4.21.x |
-| ODF Operator | 4.21.x |
-| OCS Operator | 4.21.x |
-| ODR Cluster Operator | 4.21.x |
-| Submariner | 0.22.x |
-| OADP Operator | 1.7.x |
+| OpenShift Virtualization (KubeVirt) | 4.20.x |
+| ODF Operator | 4.20.x |
+| OCS Operator | 4.20.x |
+| ODR Cluster Operator | 4.20.x |
+| Submariner | 0.20.x |
+| OADP Operator | 1.4.x |
 | External DNS Operator | 1.3.x |
 | Node Health Check Operator | 0.10.x |
 | Self Node Remediation | 0.11.x |
-| OpenShift GitOps | 1.21.x |
+| OpenShift GitOps | 1.14.x |
 
 ### DR Protection Status
 
@@ -810,7 +897,7 @@ oc get secret -n ocp-secondary $(oc get secrets -n ocp-secondary -o name | grep 
 | **DRClusters** | Both `ocp-primary` and `ocp-secondary` Available |
 | **MirrorPeer** | `ExchangedSecret` — ODF secrets exchanged between clusters |
 | **Submariner** | Healthy — both clusters connected |
-| **ODF StorageCluster** | Ready on both clusters (v4.21.x) |
+| **ODF StorageCluster** | Ready on both clusters (v4.20.x) |
 | **Volume Replication** | 4 PVCs replicating (Primary state) |
 | **DRPC `gitops-vm-protection`** | Deployed + Protected on `ocp-primary` |
 
@@ -839,16 +926,19 @@ cd ~/git/ramendr-starter-kit
 
 This single command will:
 1. Clean stale DNS records from Route53
-2. Release orphaned Elastic IPs
-3. Destroy the old hub cluster (if it exists)
-4. Install a fresh hub cluster (~45 min)
-5. Scale hub workers to 6 and label for ODF
-6. Deploy the RamenDR pattern (~20 min for operators)
-7. Wait for managed clusters to provision (~50 min)
-8. Wait for full DR convergence
-9. Print environment status
+2. Release orphaned Elastic IPs from all three regions
+3. Destroy old spoke clusters in parallel using `openshift-install destroy cluster`
+4. Destroy the old hub cluster
+5. Provision hub + primary + secondary **in parallel** (~60-75 min)
+6. Scale hub workers to 6 and label for ODF
+7. Deploy the RamenDR pattern (~20 min for operators)
+8. Wait for spokes to be imported via BYOC kubeconfigs
+9. Wait for full DR convergence
+10. Print environment status
 
 **Total time: ~2 hours unattended**
+
+> **Prerequisites:** `install-config.yaml.bak` must exist in `~/git/hub-cluster-install/`, `~/git/ocp-primary-install/`, and `~/git/ocp-secondary-install/` before running this command. See Steps 1 and 3b.
 
 ### Other Commands
 
@@ -868,8 +958,14 @@ This single command will:
 | Variable | Default | Description |
 |---|---|---|
 | `HUB_INSTALL_DIR` | `~/git/hub-cluster-install` | Hub cluster install directory |
+| `PRIMARY_INSTALL_DIR` | `~/git/ocp-primary-install` | ocp-primary install directory (BYOC) |
+| `SECONDARY_INSTALL_DIR` | `~/git/ocp-secondary-install` | ocp-secondary install directory (BYOC) |
+| `HUB_OCP_VERSION` | `4.20.6` | OCP version to install for the hub cluster |
 | `VALUES_SECRET` | `~/values-secret.yaml` | Path to secrets file |
 | `HOSTED_ZONE_ID` | `Z01653801KMZNKX9NGW6G` | Route53 hosted zone ID |
+| `HUB_REGION` | `eu-north-1` | AWS region for the hub cluster |
+| `PRIMARY_REGION` | `eu-central-1` | AWS region for ocp-primary |
+| `SECONDARY_REGION` | `eu-west-1` | AWS region for ocp-secondary |
 
 ### Manual Step-by-Step (if you prefer)
 
@@ -928,6 +1024,9 @@ watch 'oc get applications.argoproj.io -n ramendr-starter-kit-hub -o custom-colu
 | Clusters auto-destroyed after a few days | `devcluster.openshift.com` has automatic TTL cleanup | Use `./redeploy.sh` to rebuild the entire environment |
 | Submariner `subscription` fails with `no operators found in package submariner` on OCP 4.21 | The `redhat-operator-index:v4.21` catalog does not yet include the `submariner` package | Fixed in v1.1: a `ManifestWork` deploys a custom `submariner-catalog` CatalogSource (backed by `redhat-operator-index:v4.20`) to each managed cluster; `SubmarinerConfig.subscriptionConfig` points to it |
 | Submariner gateway node stuck in `Provisioned` / `rpm-ostreed.service` crash loop on OCP 4.21 | `c5d`/`r5d`/`m5d` instance types have NVMe local SSD; RHCOS on OCP 4.21 fails to boot on these | Fixed in v1.1: gateway instance type changed from `c5d.large` to `m5.large` (no local NVMe) |
-| VMs `ErrorUnschedulable`: `Insufficient devices.kubevirt.io/kvm` | Standard EC2 instances (m5, m8i, c5, etc.) do not expose `vmx`/`svm` CPU flags — `/dev/kvm` is missing | Add a `c5.metal` bare-metal MachineSet to each managed cluster (see Step 9). Metal instances provide native KVM support. |
-| DR failover fails with `ErrorUnschedulable` on secondary cluster | Secondary cluster has no metal worker, so VMs cannot be scheduled there | Add a `c5.metal` MachineSet to the secondary cluster before testing failover |
+| VMs `ErrorUnschedulable`: `Insufficient devices.kubevirt.io/kvm` | Standard EC2 instances (m5, m8i, c5, etc.) do not expose `vmx`/`svm` CPU flags — `/dev/kvm` is missing | `redeploy.sh` creates a `c5n.metal` MachineSet post-install. Verify with `oc get nodes -l node.kubernetes.io/instance-type=c5n.metal`; if missing, re-run `./redeploy.sh --pattern-only`. |
+| DR failover fails with `ErrorUnschedulable` on secondary cluster | Secondary cluster has no metal worker, so VMs cannot be scheduled there | `redeploy.sh` applies the `c5n.metal` MachineSet to both spokes. Check secondary with its kubeconfig. |
+| `odf-ssl-certificate-extractor` job fails with `SSLCertVerificationError` | Ansible's `kubernetes.core.k8s_info` module does not honour `certificate-authority-data` in kubeconfigs, causing SSL verification to fail against self-signed OCP API certificates | Generate insecure kubeconfigs with `oc login --insecure-skip-tls-verify` and patch the admin kubeconfig secrets on the hub; or set `insecure-skip-tls-verify: true` in the kubeconfig files stored in Vault |
+| Spoke install fails in a region with `InvalidNatGatewayID.NotFound` | AWS NAT Gateway provisioning race condition; some regions are more prone to this | Destroy the partial infra (`openshift-install destroy cluster --dir ...`) and retry, or switch to a different AZ/region |
+| ODF version mismatch: `StorageCluster version on ManagedCluster is incompatible with Multicluster Orchestrator version` | Hub ODF and spoke ODF must be on the same minor version | Pin all clusters to the same OCP version in `overrides/values-cluster-names.yaml` (`ocpVersion: "4.20"`) and ensure `values-hub.yaml` ODF subscriptions use `stable-4.20` channel |
 

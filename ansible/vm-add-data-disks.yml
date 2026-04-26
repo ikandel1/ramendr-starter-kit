@@ -1,0 +1,108 @@
+#!/usr/bin/env ansible-playbook
+---
+# Adds a blank secondary data disk to every VirtualMachine in the gitops-vms
+# namespace.  The disk (DataVolume) is created as a standalone object so it is
+# NOT deleted when the VM is removed, and RamenDR will protect it together with
+# the OS disk because it lives in a protected namespace.
+#
+# The playbook is fully idempotent: it skips VMs that already have the data
+# disk attached and skips DataVolumes that already exist.
+#
+# Variables (override in values-resilient.yaml or at job invocation time):
+#   vm_namespace        – namespace that contains the VMs  (default: gitops-vms)
+#   data_disk_size      – size of the blank data disk       (default: 20Gi)
+#   data_disk_suffix    – suffix appended to the VM name    (default: -data)
+#   storage_class       – StorageClass for the DataVolume
+#   access_mode         – PVC access mode
+#   volume_mode         – PVC volume mode
+- name: Add a second data disk to every VM in gitops-vms
+  become: false
+  connection: local
+  hosts: localhost
+  gather_facts: false
+  vars:
+    vm_namespace: "gitops-vms"
+    data_disk_suffix: "-data"
+    data_disk_size: "20Gi"
+    storage_class: "ocs-storagecluster-ceph-rbd-virtualization"
+    access_mode: "ReadWriteMany"
+    volume_mode: "Block"
+  tasks:
+    - name: Discover VMs in {{ vm_namespace }}
+      kubernetes.core.k8s_info:
+        api_version: kubevirt.io/v1
+        kind: VirtualMachine
+        namespace: "{{ vm_namespace }}"
+      register: vm_list
+
+    - name: Build list of VM names
+      ansible.builtin.set_fact:
+        vm_names: "{{ vm_list.resources | map(attribute='metadata.name') | list }}"
+
+    - name: End play if no VMs found
+      ansible.builtin.meta: end_play
+      when: vm_names | length == 0
+
+    - name: Ensure data DataVolume exists for each VM
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: cdi.kubevirt.io/v1beta1
+          kind: DataVolume
+          metadata:
+            name: "{{ item }}{{ data_disk_suffix }}"
+            namespace: "{{ vm_namespace }}"
+            annotations:
+              cdi.kubevirt.io/storage.bind.immediate.requested: "true"
+          spec:
+            source:
+              blank: {}
+            pvc:
+              accessModes:
+                - "{{ access_mode }}"
+              resources:
+                requests:
+                  storage: "{{ data_disk_size }}"
+              storageClassName: "{{ storage_class }}"
+              volumeMode: "{{ volume_mode }}"
+      loop: "{{ vm_names }}"
+
+    - name: Wait for each data DataVolume to reach Succeeded phase
+      kubernetes.core.k8s_info:
+        api_version: cdi.kubevirt.io/v1beta1
+        kind: DataVolume
+        namespace: "{{ vm_namespace }}"
+        name: "{{ item }}{{ data_disk_suffix }}"
+      register: dv_info
+      until: dv_info.resources | length > 0 and
+             dv_info.resources[0].status.phase | default('') == 'Succeeded'
+      retries: 30
+      delay: 10
+      loop: "{{ vm_names }}"
+
+    - name: Attach data disk to VM if not already present
+      ansible.builtin.shell: |
+        set -eo pipefail
+        DV_NAME="{{ item }}{{ data_disk_suffix }}"
+        ATTACHED=$(oc get vm "{{ item }}" -n "{{ vm_namespace }}" \
+          -o jsonpath='{.spec.template.spec.volumes[*].name}' \
+          | tr ' ' '\n' | grep -cx "^${DV_NAME}$" || true)
+        if [ "${ATTACHED}" -gt 0 ]; then
+          echo "SKIP: disk ${DV_NAME} already attached to {{ item }}"
+          exit 0
+        fi
+        oc patch vm "{{ item }}" -n "{{ vm_namespace }}" --type=json -p="[
+          {\"op\":\"add\",\"path\":\"/spec/template/spec/volumes/-\",
+           \"value\":{\"name\":\"${DV_NAME}\",\"dataVolume\":{\"name\":\"${DV_NAME}\"}}},
+          {\"op\":\"add\",\"path\":\"/spec/template/spec/domain/devices/disks/-\",
+           \"value\":{\"name\":\"${DV_NAME}\",\"disk\":{\"bus\":\"virtio\"}}}
+        ]"
+        echo "PATCHED: attached ${DV_NAME} to {{ item }}"
+      register: patch_result
+      changed_when: "'PATCHED' in patch_result.stdout"
+      loop: "{{ vm_names }}"
+
+    - name: Report attachment results
+      ansible.builtin.debug:
+        msg: "{{ item.stdout }}"
+      loop: "{{ patch_result.results }}"

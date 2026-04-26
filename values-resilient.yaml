@@ -68,6 +68,8 @@ clusterGroup:
           - datavolumes
           - dataimportcrons
           - datasources
+          - virtualmachines
+          - virtualmachineinstances
         verbs:
           - "*"
       - apiGroups:

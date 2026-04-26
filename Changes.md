@@ -44,3 +44,7 @@ Tooling (this fork, post–upstream merge)
   `quay.io/openshift-release-dev/ocp-release:4.20.6-x86_64` (override with `HUB_OCP_VERSION` or that env)
   so a 4.21+ `openshift-install` on `PATH` does not provision a 4.21 hub when spokes are 4.20.6 in
   `overrides/values-cluster-names.yaml` (same issue Martin/Elsa called out for mixed 4.20/4.21).
+
+* Merged `elsa/main` (parallel hub + spoke `openshift-install`, BYOC `byoc: true`, spoke MachineSets,
+  Vault kubeconfig handoff, cost/BYOC docs). Removed Elsa’s Linux-only `openshift-install` auto-download
+  in favor of the same release-image override for all three clusters.

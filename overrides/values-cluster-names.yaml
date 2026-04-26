@@ -1,18 +1,21 @@
 ---
-# Minimal override for DR cluster names, versions, and regions.
-# This file is applied after chart defaults (override merged last). It only contains overlay keys
-# (clusterOverrides, drpc) so chart regionalDR defaults are preserved.
-# RDR is provided by the regionaldr-with-virt Argo app (see values-hub.yaml); this file is merged as an extra value file.
+# DR cluster names, versions, regions, and BYOC.
+# RDR is the regionaldr-with-virt Argo app (see values-hub.yaml).
+# Set byoc: true when using redeploy.sh parallel 3-cluster + BYOC (kubeconfigs in Vault / values-secret).
 
 costManagement:
   ownerTag: your-user-or-team
   launchedByTag: automation-user
   environmentTag: dev
 
+# Top-level BYOC flag required by the chart ($.Values.byoc).
+byoc: true
+
 clusterOverrides:
   primary:
     name: ocp-primary
     version: 4.20.6
+    byoc: true
     install_config:
       metadata:
         name: ocp-primary
@@ -28,6 +31,7 @@ clusterOverrides:
   secondary:
     name: ocp-secondary
     version: 4.20.6
+    byoc: true
     install_config:
       metadata:
         name: ocp-secondary
@@ -41,13 +45,5 @@ clusterOverrides:
         aws:
           region: eu-west-1
 
-# DRPC overrides (preferredCluster defaults to primary if unset)
 drpc:
   preferredCluster: ocp-primary
-
-# Set this to "true", provision clusters, and add their kubeconfigs
-# as described in the values-secret template; then run
-# ./pattern.sh make install-byoc.
-# That target will run a validation play to ensure the cluster
-# setup will work with ramen patterns
-byoc: false
