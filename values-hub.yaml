@@ -16,17 +16,15 @@ clusterGroup:
     acm:
       name: advanced-cluster-management
       namespace: open-cluster-management
-      channel: release-2.16
+      channel: release-2.15
 
     odf-multicluster-orchestrator:
       name: odf-multicluster-orchestrator
       namespace: openshift-operators
-      channel: stable-4.21
 
     openshift-data-foundation:
       name: odf-operator
       namespace: openshift-storage
-      channel: stable-4.21
 
   argoCD:
     resourceTrackingMethod: annotation
@@ -81,7 +79,9 @@ clusterGroup:
       name: opp-policy
       namespace: openshift
       project: opp
-      path: charts/hub/opp
+      repoURL: https://github.com/validatedpatterns/opp-policy-chart.git
+      chartVersion: main
+      path: "."
       annotations:
         argocd.argoproj.io/sync-wave: "5"
       syncPolicy:
@@ -110,7 +110,9 @@ clusterGroup:
       name: regional-dr
       namespace: regional-dr
       project: opp
-      path: charts/hub/rdr
+      repoURL: https://github.com/validatedpatterns/regionaldr-with-virt-chart.git
+      chartVersion: main
+      path: "."
       annotations:
         argocd.argoproj.io/sync-wave: "10"
       syncPolicy:
@@ -126,6 +128,7 @@ clusterGroup:
           - RespectIgnoreDifferences=true
       extraValueFiles:
         - '/overrides/values-cluster-names.yaml'
+        - '/overrides/values-egv-dr.yaml'
         - '/overrides/values-aws-cost-optimized.yaml'
       ignoreDifferences:
         # Prevent ArgoCD from pruning dynamically created OCM resources
@@ -145,7 +148,7 @@ clusterGroup:
       namespace: golang-external-secrets
       project: hub
       chart: golang-external-secrets
-      chartVersion: 0.1.*
+      chartVersion: 0.2.*
 
     odf:
       name: odf

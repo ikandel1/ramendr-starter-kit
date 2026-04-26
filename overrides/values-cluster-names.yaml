@@ -2,7 +2,7 @@
 # Minimal override for DR cluster names, versions, and regions.
 # This file is applied after chart defaults (override merged last). It only contains overlay keys
 # (clusterOverrides, drpc) so chart regionalDR defaults are preserved.
-# Also works if merged first: -f overrides/values-cluster-names.yaml -f charts/hub/rdr/values.yaml
+# RDR is provided by the regionaldr-with-virt Argo app (see values-hub.yaml); this file is merged as an extra value file.
 
 costManagement:
   ownerTag: your-user-or-team
@@ -12,7 +12,7 @@ costManagement:
 clusterOverrides:
   primary:
     name: ocp-primary
-    version: 4.21.6
+    version: 4.20.6
     install_config:
       metadata:
         name: ocp-primary
@@ -27,7 +27,7 @@ clusterOverrides:
           region: eu-central-1
   secondary:
     name: ocp-secondary
-    version: 4.21.6
+    version: 4.20.6
     install_config:
       metadata:
         name: ocp-secondary
@@ -44,3 +44,10 @@ clusterOverrides:
 # DRPC overrides (preferredCluster defaults to primary if unset)
 drpc:
   preferredCluster: ocp-primary
+
+# Set this to "true", provision clusters, and add their kubeconfigs
+# as described in the values-secret template; then run
+# ./pattern.sh make install-byoc.
+# That target will run a validation play to ensure the cluster
+# setup will work with ramen patterns
+byoc: false

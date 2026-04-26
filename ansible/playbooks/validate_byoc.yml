@@ -1,0 +1,195 @@
+---
+- name: Validates that the regional clusters are good to use (byoc)
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  roles:
+    - role: rhvp.cluster_utils.pattern_settings
+      vars:
+        pattern_dir: "{{ playbook_dir }}/../../"
+    - role: rhvp.cluster_utils.find_vp_secrets
+  vars:
+    byoc_enabled: true
+  tasks:
+    - name: Parse secrets data
+      no_log: "{{ hide_sensitive_output | default(true) }}"
+      rhvp.cluster_utils.parse_secrets_info:
+        values_secrets_plaintext: "{{ values_secrets_data }}"
+        secrets_backing_store: "{{ secrets_backing_store | default('vault') }}"
+      register: secrets_results
+
+    - name: Check byoc if we need to
+      block:
+      - name: Set facts for dr clusters backend
+        ansible.builtin.set_fact:
+            clusters:
+              primary_cluster: "{{ secrets_results.parsed_secrets['ocp-primary_cluster_kubeconfig'].fields.kubeconfig }}"
+              secondary_cluster: "{{ secrets_results.parsed_secrets['ocp-secondary_cluster_kubeconfig'].fields.kubeconfig }}"
+
+      - name: Get a tempfile for the kubeconfigs
+        ansible.builtin.tempfile:
+          state: directory
+        register: kubeconfigs_tempfolder
+
+      - name: Store pull secrets in tempfile
+        ansible.builtin.copy:
+          dest: "{{ kubeconfigs_tempfolder.path }}/{{ cluster.key }}"
+          content: "{{ cluster.value }}"
+          mode: "0644"
+        loop_control:
+          loop_var: cluster
+          label: "{{ cluster.key }}"
+        loop: "{{ clusters | dict2items }}"
+
+      - name: Check that both DR clusters are reachable
+        kubernetes.core.k8s_cluster_info:
+          kubeconfig: "{{ kubeconfigs_tempfolder.path }}/{{ cluster.key }}"
+        register: api_status
+        loop_control:
+          loop_var: cluster
+          label: "{{ cluster.key }}"
+        loop: "{{ clusters | dict2items }}"
+
+      - name: Hub cluster version
+        kubernetes.core.k8s_info:
+          api: config.openshift.io/v1
+          kind: ClusterVersion
+          name: version
+        register: hub_clusterversion_raw
+
+      - name: Primary cluster version
+        kubernetes.core.k8s_info:
+          kubeconfig: "{{ kubeconfigs_tempfolder.path }}/primary_cluster"
+          api: config.openshift.io/v1
+          kind: ClusterVersion
+          name: version
+        register: primary_clusterversion_raw
+
+      - name: Secondary cluster version
+        kubernetes.core.k8s_info:
+          kubeconfig: "{{ kubeconfigs_tempfolder.path }}/secondary_cluster"
+          api: config.openshift.io/v1
+          kind: ClusterVersion
+          name: version
+        register: secondary_clusterversion_raw
+
+      - name: Set fact for cluster minor.major versions
+        ansible.builtin.set_fact:
+            primary_cluster_version: "{{ primary_clusterversion_raw.resources[0].status.desired.version.split('.')[:2] | join('.') }}"
+            secondary_cluster_version: "{{ secondary_clusterversion_raw.resources[0].status.desired.version.split('.')[:2] | join('.') }}"
+            hub_cluster_version: "{{ hub_clusterversion_raw.resources[0].status.desired.version.split('.')[:2] | join('.') }}"
+
+      - name: Validate BYOC DR Clusters have the same minor version between 4.18 and 4.20
+        ansible.builtin.assert:
+          that:
+            - hub_cluster_version is ansible.builtin.version("4.18", ">=")
+            - primary_cluster_version is ansible.builtin.version(hub_cluster_version)
+            - secondary_cluster_version is ansible.builtin.version(hub_cluster_version)
+          fail_msg: |
+            FATAL: BYOC DR Clusters have different versions:
+            Primary: {{ primary_cluster_version }}, Secondary: {{ secondary_cluster_version }} HUB: {{ hub_cluster_version }}).
+            Currently only same minor verion supported by ramenDR and odf.
+
+      - name: Hub cluster network
+        kubernetes.core.k8s_info:
+          api: config.openshift.io/v1
+          kind: Network
+          name: cluster
+        register: hub_clusternetwork_raw
+
+      - name: Primary cluster network
+        kubernetes.core.k8s_info:
+          kubeconfig: "{{ kubeconfigs_tempfolder.path }}/primary_cluster"
+          api: config.openshift.io/v1
+          kind: Network
+          name: cluster
+        register: primary_clusternetwork_raw
+
+      - name: Secondary cluster network
+        kubernetes.core.k8s_info:
+          kubeconfig: "{{ kubeconfigs_tempfolder.path }}/secondary_cluster"
+          api: config.openshift.io/v1
+          kind: Network
+          name: cluster
+        register: secondary_clusternetwork_raw
+
+      - name: Set fact for cluster network vars
+        ansible.builtin.set_fact:
+            hub_cluster_cluster_cidr: "{{ hub_clusternetwork_raw.resources[0].spec.clusterNetwork[0].cidr }}"
+            hub_cluster_service_cidr: "{{ hub_clusternetwork_raw.resources[0].spec.serviceNetwork[0] }}"
+            primary_cluster_cluster_cidr: "{{ primary_clusternetwork_raw.resources[0].spec.clusterNetwork[0].cidr }}"
+            primary_cluster_service_cidr: "{{ primary_clusternetwork_raw.resources[0].spec.serviceNetwork[0] }}"
+            secondary_cluster_cluster_cidr: "{{ secondary_clusternetwork_raw.resources[0].spec.clusterNetwork[0].cidr }}"
+            secondary_cluster_service_cidr: "{{ secondary_clusternetwork_raw.resources[0].spec.serviceNetwork[0] }}"
+
+      - name: Validate BYOC DR Clusters have non overlapping pod networks.
+        ansible.builtin.assert:
+          that:
+            - not (hub_cluster_cluster_cidr | ansible.utils.ipaddr(primary_cluster_cluster_cidr))
+            - not (hub_cluster_cluster_cidr | ansible.utils.ipaddr(secondary_cluster_cluster_cidr))
+            - not (primary_cluster_cluster_cidr | ansible.utils.ipaddr(secondary_cluster_cluster_cidr))
+          fail_msg: |
+            FATAL: BYOC DR Clusters have overlapping pod networks :
+            Primary: {{ primary_cluster_cluster_cidr }}, Secondary: {{ secondary_cluster_cluster_cidr }} HUB: {{ hub_cluster_cluster_cidr }}).
+
+      - name: Validate BYOC DR Clusters have non overlapping service networks.
+        ansible.builtin.assert:
+          that:
+            - not (hub_cluster_service_cidr | ansible.utils.ipaddr(primary_cluster_service_cidr))
+            - not (hub_cluster_service_cidr | ansible.utils.ipaddr(secondary_cluster_service_cidr))
+            - not (primary_cluster_service_cidr | ansible.utils.ipaddr(secondary_cluster_service_cidr))
+          fail_msg: |
+            FATAL: BYOC DR Clusters have overlapping service networks:
+            Primary: {{ primary_cluster_service_cidr }}, Secondary: {{ secondary_cluster_service_cidr }} HUB: {{ hub_cluster_service_cidr }}).
+
+      - name: Get primary cluster node info
+        kubernetes.core.k8s_info:
+          kubeconfig: "{{ kubeconfigs_tempfolder.path }}/primary_cluster"
+          kind: Node
+          label_selectors:
+            - node-role.kubernetes.io/worker
+        register: primary_nodes_raw
+
+      - name: Build instance type list (primary)
+        ansible.builtin.set_fact:
+          primary_worker_instance_types: "{{ primary_worker_instance_types | default([]) + [ item.metadata.labels['node.kubernetes.io/instance-type'] ] }}"
+        loop: "{{ primary_nodes_raw.resources }}"
+        loop_control:
+          label: "{{ item.metadata.name }}"
+        when: item.metadata.labels is defined and
+              'node.kubernetes.io/instance-type' in item.metadata.labels
+
+      - name: Make instance types unique (primary-cluster)
+        ansible.builtin.set_fact:
+          primary_worker_instance_types: "{{ primary_worker_instance_types | unique }}"
+
+      - name: Get secondary cluster node info
+        kubernetes.core.k8s_info:
+          kubeconfig: "{{ kubeconfigs_tempfolder.path }}/secondary_cluster"
+          kind: Node
+          label_selectors:
+            - node-role.kubernetes.io/worker
+        register: secondary_nodes_raw
+
+      - name: Build instance type list (secondary)
+        ansible.builtin.set_fact:
+          secondary_worker_instance_types: "{{ secondary_worker_instance_types | default([]) + [ item.metadata.labels['node.kubernetes.io/instance-type'] ] }}"
+        loop_control:
+          label: "{{ item.metadata.name }}"
+        loop: "{{ secondary_nodes_raw.resources }}"
+        when: item.metadata.labels is defined and
+              'node.kubernetes.io/instance-type' in item.metadata.labels
+
+      - name: Make instance types unique (primary-cluster)
+        ansible.builtin.set_fact:
+          secondary_worker_instance_types: "{{ secondary_worker_instance_types | unique }}"
+
+      - name: Validate BYOC DR Clusters have metal node to run virtual machine workload
+        ansible.builtin.assert:
+          that:
+            - primary_worker_instance_types | select('search', 'metal') | list | length > 0
+            - secondary_worker_instance_types | select('search', 'metal') | list | length > 0
+          fail_msg: |
+            FATAL: BYOC DR Clusters have no metal nodes:
+            Primary: {{ primary_worker_instance_types }}).
+            Secondary: {{ primary_worker_instance_types }}).

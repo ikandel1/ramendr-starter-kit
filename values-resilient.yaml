@@ -94,7 +94,7 @@ clusterGroup:
       namespace: golang-external-secrets
       project: resilient
       chart: golang-external-secrets
-      chartVersion: 0.1.*
+      chartVersion: 0.2.*
 
     openshift-cnv:
       name: openshift-cnv
@@ -130,6 +130,8 @@ clusterGroup:
       name: adp-data-protection-application
       namespace: openshift-adp
       project: resilient
-      path: charts/resilient/data-protection-application
+      repoURL: https://github.com/validatedpatterns/oadp-data-protection-application-chart.git
+      chartVersion: main
+      path: "."
 
   managedClusterGroups: []

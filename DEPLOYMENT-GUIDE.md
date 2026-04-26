@@ -116,9 +116,9 @@ You will need:
 Download the **amd64 (x86_64)** version even on Apple Silicon Macs — the clusters run x86 instances:
 
 ```bash
-# Download amd64 version for OCP 4.21
+# Download amd64 version for OCP 4.20 (use the same minor as hub / managed clusters, e.g. 4.20.6)
 curl -L -o /tmp/openshift-install.tar.gz \
-  "https://mirror.openshift.com/pub/openshift-v4/clients/ocp/stable-4.21/openshift-install-mac-amd64.tar.gz"
+  "https://mirror.openshift.com/pub/openshift-v4/clients/ocp/stable-4.20/openshift-install-mac-amd64.tar.gz"
 
 mkdir -p ~/.local/bin
 tar xzf /tmp/openshift-install.tar.gz -C ~/.local/bin openshift-install
