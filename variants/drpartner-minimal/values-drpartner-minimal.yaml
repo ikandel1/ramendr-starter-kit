@@ -1,6 +1,6 @@
 ---
 clusterGroup:
-  name: drpartner-minimal
+  name: minimal
   isHubCluster: true
   namespaces:
     cluster-ca-mgt: {}
