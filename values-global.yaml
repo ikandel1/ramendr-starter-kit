@@ -1,22 +1,14 @@
----
 global:
   pattern: ramendr-starter-kit
   vpNewFolderDir: true
-
   options:
     useCSV: false
     syncPolicy: Automatic
     installPlanApproval: Automatic
-
   hub:
     provider: aws
-
 main:
-  # Selecting a variant loads variants/<name>/values-<name>.yaml when the
-  # variants/ folder is present (global.vpNewFolderDir=true).
-  # Default odf = control test of restructured charts vs previous full ODF install.
-  variant: odf
+  variant: drpartner-minimal
   multiSourceConfig:
     enabled: true
-    # Need >= 0.9.57 for variants/ folder path helpers (vpNewFolderDir).
     clusterGroupChartVersion: 0.9.*
