@@ -34,4 +34,4 @@ drpc:
 # ./pattern.sh make install-byoc.
 # That target will run a validation play to ensure the cluster
 # setup will work with ramen patterns
-byoc: false
+byoc: true
